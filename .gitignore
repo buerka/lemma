@@ -1,0 +1,18 @@
+# Binaries
+/lem
+/lemma
+/dist/
+
+# Go test artifacts
+*.test
+coverage.out
+
+# macOS
+.DS_Store
+
+# Runtime ledgers (never commit a user's progress directory)
+progress/
+
+# Scratch
+*.tmp
+*.tmp-*
