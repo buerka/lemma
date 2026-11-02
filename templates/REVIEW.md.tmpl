@@ -1,0 +1,56 @@
+# REVIEW — {{.ChangesetID}}
+
+Project: **{{.Project}}**
+Intent: {{.Intent}}
+Base revision: `{{.BaseRevision}}`
+Current revision: `{{.CurrentRevision}}`
+Changeset hash: `{{.Hash}}`
+Hash valid: {{.HashValid}}
+
+{{- if .Stale}}
+
+> **Warning:** the ledger revision has moved since this changeset was planned.
+> Applying it will return CONFLICT. Re-plan before approval.
+{{- end}}
+
+## Operations
+
+| Op | Target | From | To |
+|---|---|---|---|
+{{- range .Operations}}
+| {{.Op}} | {{.Target}} | {{.From}} | {{.To}} |
+{{- else}}
+| — | — | — | — |
+{{- end}}
+
+## Evidence
+
+| Path | SHA-256 | Status |
+|---|---|---|
+{{- range .Evidence}}
+| {{.Path}} | {{.Hash}} | {{.Status}} |
+{{- else}}
+| — | — | no evidence |
+{{- end}}
+
+## Risks
+
+{{- range .Risks}}
+- {{.}}
+{{- else}}
+- none recorded
+{{- end}}
+
+## Rollback
+
+{{.Rollback}}
+
+## Approval
+
+```bash
+lem approve {{.ChangesetPath}} --by human
+lem apply {{.ChangesetPath}}
+```
+
+Approval records the exact `changeset_hash` above in `progress/gates.jsonl`.
+Changing the changeset after approval invalidates the gate.

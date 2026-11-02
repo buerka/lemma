@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/buerka/lemma/schemas/task.schema.json",
+  "title": "Lemma tasks.yaml",
+  "type": "object",
+  "required": ["tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+          "phase": {"type": "string"},
+          "title": {"type": "string", "minLength": 1},
+          "owner": {"enum": ["agent", "human"]},
+          "status": {"enum": ["todo", "doing", "blocked", "done"]},
+          "depends_on": {"type": "array", "items": {"type": "string"}},
+          "acceptance": {"type": "array", "items": {"type": "string"}},
+          "artifacts": {"type": "array", "items": {"type": "string"}},
+          "updated_at": {"type": "string"}
+        }
+      }
+    }
+  }
+}

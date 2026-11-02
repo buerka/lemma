@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/buerka/lemma/schemas/run.schema.json",
+  "title": "Lemma run_spec.json",
+  "type": "object",
+  "required": ["run_id", "project", "task_id", "command", "config_hash", "created_at", "revision"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "project": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "method": {"type": "string"},
+    "split": {"type": "string"},
+    "seed": {"type": "integer"},
+    "host": {"type": "string"},
+    "workdir": {"type": "string"},
+    "run_root": {"type": "string"},
+    "python": {"type": "string"},
+    "command": {"type": "string", "minLength": 1},
+    "env": {"type": "object", "additionalProperties": {"type": "string"}},
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "outputs": {"type": "array", "items": {"type": "string"}},
+    "code": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo": {"type": "string"},
+        "commit": {"type": "string"},
+        "patch_hash": {"type": "string"},
+        "dirty": {"type": "boolean"}
+      }
+    },
+    "config_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "config_path": {"type": "string"},
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string"},
+        "uri": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "created_at": {"type": "string"},
+    "revision": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

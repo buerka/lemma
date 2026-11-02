@@ -1,0 +1,57 @@
+# Remote task: {{.RunID}}
+
+Project: **{{.Project}}**
+Task: **{{.TaskID}}**
+Host: `{{.Host}}`
+Remote dir: `{{.RemoteDir}}`
+Local run dir: `{{.LocalRunDir}}`
+Python: `{{.Python}}`
+Created: {{.CreatedAt}}
+
+## Command
+
+```bash
+{{.Command}}
+```
+
+## Inputs
+
+{{- range .Inputs}}
+- `{{.Path}}` — `{{.SHA256}}`
+{{- else}}
+- none recorded
+{{- end}}
+
+## Outputs
+
+{{- range .Outputs}}
+- `{{.}}`
+{{- else}}
+- metrics.json, manifest.json, result.json
+{{- end}}
+
+## Steps
+
+1. `ssh_exec` on `{{.Host}}`: `mkdir -p {{.RemoteDir}}`
+2. `ssh_put`: `{{.LocalSpec}}` -> `{{.RemoteDir}}/run_spec.json`
+3. `ssh_put`: `{{.LocalRunDir}}/runner.sh` -> `{{.RemoteDir}}/runner.sh`
+4. `ssh_put`: `{{.LocalRunDir}}/runner.py` -> `{{.RemoteDir}}/runner.py`
+5. `ssh_exec`: `chmod +x {{.RemoteDir}}/runner.sh`
+6. `ssh_exec`: `tmux new-session -d -s {{.RunID}} 'bash {{.RemoteDir}}/runner.sh {{.RunID}}'`
+7. Poll every 60s: `cat {{.RemoteDir}}/exit_code` and `tail -n 20 {{.RemoteDir}}/stdout.log`
+8. On exit: `ssh_get` `manifest.json`, `metrics.json`, `result.json` into the local run dir
+9. Write the returned JSON as `{{.LocalRunDir}}/remote_result.json`
+10. Tell the manager agent the local path; the manager runs `lem run finish {{.RunID}} --result <path>`
+
+## Rules
+
+- Use the ssh-mcp tools exposed by your client; names may be prefixed
+  (`ssh_exec`, `ssh_put`, `ssh_get`, `ssh_ls`, `ssh_output`, `ssh_forward`).
+- Do not use raw `ssh`/`scp`; ssh-mcp is the only transport.
+- Do not modify `progress/events.jsonl`, `progress/tasks.yaml`, or any receipt.
+- Do not download checkpoints or large artifacts unless explicitly asked.
+- If the run fails: return `exit_code`, a short `logs_tail`, and `error`; do not
+  retry without instruction.
+- `remote_result.json` must be valid JSON with at least:
+  `run_id`, `status` (`succeeded` | `failed` | `cancelled`), `exit_code`,
+  `metrics`, and `artifacts` (URI + SHA-256; do not inline large data).

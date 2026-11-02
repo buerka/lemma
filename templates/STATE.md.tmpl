@@ -1,0 +1,51 @@
+<!-- lem:revision={{.Revision}} -->
+# {{.Project}} — state
+
+Generated: {{.GeneratedAt}}
+Revision: `{{.Revision}}`
+Phase: **{{.Phase}}**
+
+## Task counts
+
+| todo | doing | blocked | done | total |
+|---:|---:|---:|---:|---:|
+| {{.CountTodo}} | {{.CountDoing}} | {{.CountBlocked}} | {{.CountDone}} | {{.CountTotal}} |
+
+## Tasks
+
+| ID | Phase | Title | Owner | Status | Depends on |
+|---|---|---|---|---|---|
+{{- range .Tasks}}
+| {{.ID}} | {{.Phase}} | {{.Title}} | {{.Owner}} | {{.Status}} | {{.DependsOn}} |
+{{- else}}
+| — | — | no tasks | — | — | — |
+{{- end}}
+
+## Next task
+
+{{- if .NextTask}}
+- **{{.NextTask.ID}}** — {{.NextTask.Title}} ({{.NextTask.Phase}}, owner {{.NextTask.Owner}})
+{{- range .NextTask.Acceptance}}
+  - acceptance: {{.}}
+{{- end}}
+{{- else}}
+- none (all tasks done, blocked, or waiting on dependencies)
+{{- end}}
+
+## Pending changesets
+
+{{- range .PendingChangesets}}
+- {{.}}
+{{- else}}
+- none
+{{- end}}
+
+## Recent events
+
+| Time | Type | Task | Summary |
+|---|---|---|---|
+{{- range .RecentEvents}}
+| {{.TS}} | {{.Type}} | {{.TaskID}} | {{.Summary}} |
+{{- else}}
+| — | — | — | no events |
+{{- end}}

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Lemma remote runner.
+
+Reads run_spec.json, verifies declared input hashes when the files exist,
+executes the command, and writes manifest.json, metrics.json, result.json and
+remote_result.json into the run directory.
+
+This file is intentionally dependency-free and does not import lemma.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import time
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return "sha256:" + h.hexdigest()
+
+
+def now():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--spec", required=True)
+    args = ap.parse_args()
+
+    with open(args.spec) as f:
+        spec = json.load(f)
+
+    run_id = spec["run_id"]
+    run_dir = os.path.dirname(os.path.abspath(args.spec))
+    started = now()
+    exit_code = 0
+    status = "succeeded"
+    error = ""
+
+    for item in spec.get("inputs", []):
+        path = os.path.expanduser(item.get("path", ""))
+        expected = item.get("sha256", "")
+        if path and expected and os.path.exists(path):
+            actual = sha256_file(path)
+            if actual != expected:
+                print("input hash mismatch: %s expected=%s actual=%s" % (path, expected, actual))
+                status, exit_code, error = "failed", 3, "input hash mismatch: " + path
+                break
+
+    if status == "succeeded":
+        env = os.environ.copy()
+        env.update(spec.get("env") or {})
+        try:
+            proc = subprocess.run(
+                spec["command"],
+                shell=True,
+                cwd=os.path.expanduser(spec.get("workdir") or os.getcwd()),
+                env=env,
+            )
+            exit_code = proc.returncode
+            if exit_code != 0:
+                status = "failed"
+                error = "command exited with %d" % exit_code
+        except Exception as exc:  # noqa: BLE001 - runner must report any failure
+            exit_code = 1
+            status = "failed"
+            error = str(exc)
+
+    finished = now()
+    artifacts = []
+    for name in spec.get("outputs", []):
+        path = os.path.join(run_dir, name)
+        if os.path.isfile(path):
+            artifacts.append({
+                "name": os.path.basename(name),
+                "uri": "remote://%s/%s" % (run_id, name),
+                "sha256": sha256_file(path),
+                "size": os.path.getsize(path),
+            })
+
+    files = []
+    for root, _dirs, names in os.walk(run_dir):
+        for name in sorted(names):
+            if name in ("manifest.json", "remote_result.json"):
+                continue
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, run_dir)
+            files.append({
+                "path": rel,
+                "sha256": sha256_file(path),
+                "size": os.path.getsize(path),
+            })
+
+    metrics = {}
+    metrics_path = os.path.join(run_dir, "metrics.json")
+    if os.path.isfile(metrics_path):
+        try:
+            with open(metrics_path) as f:
+                metrics = json.load(f)
+        except Exception:
+            metrics = {}
+
+    manifest = {
+        "run_id": run_id,
+        "created_at": finished,
+        "files": files,
+        "artifacts": artifacts,
+    }
+    with open(os.path.join(run_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+    result = {
+        "run_id": run_id,
+        "project": spec.get("project"),
+        "task_id": spec.get("task_id"),
+        "status": status,
+        "exit_code": exit_code,
+        "started_at": started,
+        "finished_at": finished,
+        "metrics": metrics,
+        "artifacts": artifacts,
+        "manifest": manifest,
+        "error": error,
+        "code": spec.get("code", {}),
+        "config_hash": spec.get("config_hash", ""),
+        "data": spec.get("data"),
+    }
+    for name in ("result.json", "remote_result.json"):
+        with open(os.path.join(run_dir, name), "w") as f:
+            json.dump(result, f, indent=2, sort_keys=True)
+            f.write("\n")
+
+    print(json.dumps({"run_id": run_id, "status": status, "exit_code": exit_code}))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+RUN_ID="${1:?usage: runner.sh <run_id>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_DIR="${LEM_RUN_DIR:-$SCRIPT_DIR}"
+PYTHON="${LEM_PYTHON:-python3}"
+
+mkdir -p "$RUN_DIR"
+"$PYTHON" "$RUN_DIR/runner.py" --spec "$RUN_DIR/run_spec.json" \
+  > "$RUN_DIR/stdout.log" 2>&1
+code=$?
+echo "$code" > "$RUN_DIR/exit_code"
+exit "$code"
