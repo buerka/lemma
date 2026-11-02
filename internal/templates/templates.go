@@ -10,6 +10,7 @@ import (
 type StateData struct {
 	Project           string
 	Revision          string
+	Fingerprint       string
 	GeneratedAt       string
 	Phase             string
 	CountTodo         int

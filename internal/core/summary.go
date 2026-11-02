@@ -213,16 +213,9 @@ func (l *Ledger) WriteState(force bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	marker := "<!-- lem:revision=" + summary.Revision + " -->"
-	if !force {
-		if old, err := os.ReadFile(l.StatePath()); err == nil && strings.HasPrefix(string(old), marker) {
-			return false, nil
-		}
-	}
 	data := tmpl.StateData{
 		Project:           summary.Project,
 		Revision:          summary.Revision,
-		GeneratedAt:       l.NowUTC(),
 		Phase:             summary.Phase,
 		CountTodo:         summary.Counts[schema.StatusTodo],
 		CountDoing:        summary.Counts[schema.StatusDoing],
@@ -270,6 +263,18 @@ func (l *Ledger) WriteState(force bool) (bool, error) {
 			Summary: EventSummary(ev),
 		})
 	}
+	fp, err := HashValue(data)
+	if err != nil {
+		return false, Wrap(CodeGeneral, "fingerprint STATE.md", err)
+	}
+	data.Fingerprint = fp
+	marker := "<!-- lem:revision=" + summary.Revision + " state=" + fp + " -->"
+	if !force {
+		if old, err := os.ReadFile(l.StatePath()); err == nil && strings.HasPrefix(string(old), marker) {
+			return false, nil
+		}
+	}
+	data.GeneratedAt = l.NowUTC()
 	b, err := tmpl.RenderState(data)
 	if err != nil {
 		return false, Wrap(CodeGeneral, "render STATE.md", err)

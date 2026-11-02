@@ -232,6 +232,13 @@ func cmdRunStatus(c *Context, args []string) error {
 		if result.Error != "" {
 			fmt.Fprintf(c.Out, "error:   %s\n", result.Error)
 		}
+		if result.LogsTail != "" {
+			tail := strings.ReplaceAll(result.LogsTail, "\n", " | ")
+			if len(tail) > 500 {
+				tail = tail[:500] + "..."
+			}
+			fmt.Fprintf(c.Out, "logs:    %s\n", tail)
+		}
 	}
 	if manifest != nil {
 		fmt.Fprintf(c.Out, "files:   %d, artifacts: %d\n", len(manifest.Files), len(manifest.Artifacts))

@@ -161,6 +161,10 @@ func TestEndToEndLedgerFlow(t *testing.T) {
 	if gate["changeset_hash"] != csHash {
 		t.Fatalf("gate hash = %v, want %s", gate["changeset_hash"], csHash)
 	}
+	approvedFiles := runGit(t, filepath.Join(root, "progress"), "show", "--pretty=format:", "--name-only", "HEAD")
+	if strings.TrimSpace(approvedFiles) != "gates.jsonl" {
+		t.Fatalf("approve commit touched more than gates.jsonl: %q", approvedFiles)
+	}
 
 	applyOut := decodeJSON[core.ApplyResult](t, mustRun(t, "--json", "--project", root, "apply", csPath))
 	if applyOut.Receipt.ChangesetHash != csHash || applyOut.Receipt.GitCommit == "" {

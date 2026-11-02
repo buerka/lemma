@@ -881,7 +881,8 @@ predictions/
 | `metrics` | `metrics.json` |
 | `artifacts` | URI + SHA-256 |
 
-`lem verify` 可以检查 manifest 是否缺字段、artifact 是否缺失、哈希是否匹配。
+`lem artifact verify` 检查本地 manifest 的文件是否缺失、SHA-256 是否匹配；
+`lem verify` 负责 schema、事件链、gate、receipt 和 git 状态。
 
 ---
 

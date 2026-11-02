@@ -355,9 +355,6 @@ func Approve(l *Ledger, ref string, opts ApproveOptions) (*schema.Gate, bool, er
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := l.WriteState(true); err != nil {
-		return nil, false, err
-	}
 	if _, _, err := l.Commit("approve: " + cs.ChangesetID + " by " + opts.By); err != nil {
 		return nil, false, Wrap(CodeGeneral, "commit approval", err)
 	}
