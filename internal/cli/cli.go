@@ -14,7 +14,8 @@ import (
 	"github.com/buerka/lemma/internal/core"
 )
 
-const Version = "0.1.0"
+// Version is overridden by GoReleaser via -ldflags at release time.
+var Version = "0.1.0"
 
 type Globals struct {
 	Project     string

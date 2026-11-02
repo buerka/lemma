@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -535,4 +536,290 @@ func TestDoctorWithSSHHost(t *testing.T) {
 	if !found {
 		t.Fatalf("doctor did not validate SSH host: %+v", report.Checks)
 	}
+}
+
+func TestVerifyDetectsTamperedEvent(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "tamper")
+	initDemo(t, root, "tamper")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+
+	eventsPath := filepath.Join(root, "progress", "events.jsonl")
+	original, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := bytes.Replace(original, []byte(`"title":"task"`), []byte(`"title":"tampered"`), 1)
+	if bytes.Equal(tampered, original) {
+		t.Fatal("test could not find a payload to tamper with")
+	}
+	if err := os.WriteFile(eventsPath, tampered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLI("--json", "--project", root, "verify")
+	if code != 1 {
+		t.Fatalf("tampered verify exit = %d, want 1\n%s", code, out)
+	}
+	report := decodeJSON[core.VerifyReport](t, out)
+	if report.OK {
+		t.Fatal("tampered event chain was accepted")
+	}
+	found := false
+	for _, issue := range report.Issues {
+		if issue.Code == "EVENT_HASH" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing EVENT_HASH issue: %+v", report.Issues)
+	}
+
+	if err := os.WriteFile(eventsPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report = decodeJSON[core.VerifyReport](t, mustRun(t, "--json", "--project", root, "verify"))
+	if !report.OK {
+		t.Fatalf("verify after restore: %+v", report.Issues)
+	}
+}
+
+func TestArtifactVerifyDetectsCorruption(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "artifact")
+	initDemo(t, root, "artifact")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--method", "baseline", "--split", "random", "--seed", "0", "--command", "true")
+	runDir := filepath.Join(root, "progress", "runs", "T1.baseline.random.seed0")
+	remote := []byte(`{"run_id":"T1.baseline.random.seed0","status":"succeeded","exit_code":0,"metrics":{"score":1}}`)
+	if err := os.WriteFile(filepath.Join(runDir, "remote_result.json"), remote, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, "--json", "--project", root, "run", "finish", "T1.baseline.random.seed0",
+		"--result", filepath.Join(runDir, "remote_result.json"))
+
+	metricsPath := filepath.Join(runDir, "metrics.json")
+	original, err := os.ReadFile(metricsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metricsPath, append(original, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLI("--json", "--project", root, "artifact", "verify")
+	if code != 1 {
+		t.Fatalf("corrupt artifact exit = %d, want 1\n%s", code, out)
+	}
+	report := decodeJSON[core.ArtifactReport](t, out)
+	if report.OK || report.Failed == 0 {
+		t.Fatalf("corrupt artifact was accepted: %+v", report)
+	}
+	if err := os.WriteFile(metricsPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report = decodeJSON[core.ArtifactReport](t, mustRun(t, "--json", "--project", root, "artifact", "verify"))
+	if !report.OK {
+		t.Fatalf("artifact verify after restore: %+v", report.Checks)
+	}
+}
+
+func TestRunFinishCopiesExternalResult(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "external")
+	initDemo(t, root, "external")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--method", "baseline", "--split", "random", "--seed", "0", "--command", "true")
+	external := filepath.Join(root, "external_result.json")
+	body := []byte(`{"run_id":"T1.baseline.random.seed0","status":"succeeded","exit_code":0,"metrics":{"score":2}}`)
+	if err := os.WriteFile(external, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, "--json", "--project", root, "run", "finish", "T1.baseline.random.seed0", "--result", external)
+	runDir := filepath.Join(root, "progress", "runs", "T1.baseline.random.seed0")
+	if _, err := os.Stat(filepath.Join(runDir, "remote_result.json")); err != nil {
+		t.Fatal("external remote result was not copied into the run directory")
+	}
+	manifest := decodeJSON[schema.Manifest](t, mustReadFile(t, filepath.Join(runDir, "manifest.json")))
+	found := false
+	for _, f := range manifest.Files {
+		if f.Path == "remote_result.json" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("manifest does not include remote_result.json: %+v", manifest.Files)
+	}
+	report := decodeJSON[core.VerifyReport](t, mustRun(t, "--json", "--project", root, "verify"))
+	if !report.OK {
+		t.Fatalf("verify after external result: %+v", report.Issues)
+	}
+}
+
+func TestRunStartIdempotentAndForce(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "restart")
+	initDemo(t, root, "restart")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--method", "baseline", "--split", "random", "--seed", "0", "--command", "true")
+	code, out, _ := runCLI("--json", "--project", root, "run", "start", "--task", "T1",
+		"--method", "baseline", "--split", "random", "--seed", "0", "--command", "true")
+	if code != 5 {
+		t.Fatalf("duplicate run start exit = %d, want 5\n%s", code, out)
+	}
+	var start struct {
+		AlreadyExists bool `json:"already_exists"`
+	}
+	if err := json.Unmarshal([]byte(out), &start); err != nil || !start.AlreadyExists {
+		t.Fatalf("unexpected duplicate start payload: %v %s", err, out)
+	}
+
+	runDir := filepath.Join(root, "progress", "runs", "T1.baseline.random.seed0")
+	remote := []byte(`{"run_id":"T1.baseline.random.seed0","status":"succeeded","exit_code":0}`)
+	if err := os.WriteFile(filepath.Join(runDir, "remote_result.json"), remote, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, "--json", "--project", root, "run", "finish", "T1.baseline.random.seed0",
+		"--result", filepath.Join(runDir, "remote_result.json"))
+	if _, err := os.Stat(filepath.Join(runDir, "result.json")); err != nil {
+		t.Fatal("result.json missing after finish")
+	}
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--method", "baseline", "--split", "random", "--seed", "0", "--command", "true", "--force")
+	if _, err := os.Stat(filepath.Join(runDir, "result.json")); !os.IsNotExist(err) {
+		t.Fatal("forced restart left the previous result.json behind")
+	}
+	report := decodeJSON[core.VerifyReport](t, mustRun(t, "--json", "--project", root, "verify"))
+	if !report.OK {
+		t.Fatalf("verify after forced restart: %+v", report.Issues)
+	}
+}
+
+func TestPlanRequiresEvidence(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	root := newProjectRoot(t, "plan")
+	initDemo(t, root, "plan")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	code, _, _ := runCLI("--project", root, "plan", "--task", "T1", "--status", "done",
+		"--out", filepath.Join(root, "progress", "changesets", "cs-no-evidence.json"))
+	if code != 2 {
+		t.Fatalf("plan without evidence exit = %d, want 2", code)
+	}
+	code, _, _ = runCLI("--project", root, "plan", "--task", "T1", "--status", "done",
+		"--evidence", "missing.json", "--out", filepath.Join(root, "progress", "changesets", "cs-missing.json"))
+	if code != 1 {
+		t.Fatalf("plan with missing evidence exit = %d, want 1", code)
+	}
+}
+
+func TestProjectRegistryConflictAndForce(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	rootA := newProjectRoot(t, "alpha")
+	rootB := newProjectRoot(t, "beta")
+	initDemo(t, rootA, "alpha")
+	initDemo(t, rootB, "beta")
+	mustRun(t, "--json", "project", "add", "shared", "--root", rootA)
+	code, _, _ := runCLI("--json", "project", "add", "shared", "--root", rootB)
+	if code != 3 {
+		t.Fatalf("registry conflict exit = %d, want 3", code)
+	}
+	mustRun(t, "--json", "project", "add", "shared", "--root", rootB, "--force")
+	out := mustRun(t, "--json", "project", "list")
+	list := decodeJSON[map[string]any](t, out)
+	projects := list["projects"].([]any)
+	if len(projects) != 1 {
+		t.Fatalf("unexpected registry: %s", out)
+	}
+	entry := projects[0].(map[string]any)
+	if entry["root"] != rootB {
+		t.Fatalf("force add did not replace root: %v", entry)
+	}
+}
+
+func TestCrossProcessLockReturnsBusy(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "crossproc")
+	initDemo(t, root, "crossproc")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	csPath := filepath.Join(root, "progress", "changesets", "cs-lock.json")
+	mustRun(t, "--json", "--project", root, "plan", "--task", "T1", "--status", "doing", "--out", csPath)
+	mustRun(t, "--json", "--project", root, "approve", csPath, "--by", "human")
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperHoldLock$")
+	cmd.Env = append(os.Environ(), "LEM_HELPER_HOLD=1", "LEM_HELPER_ROOT="+root)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}
+	defer cleanup()
+
+	ready := make(chan bool, 1)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			if strings.Contains(sc.Text(), "LOCKED") {
+				ready <- true
+				return
+			}
+		}
+		ready <- false
+	}()
+	select {
+	case ok := <-ready:
+		if !ok {
+			t.Fatalf("helper did not acquire the lock: %s", stderr.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("helper did not report lock acquisition: %s", stderr.String())
+	}
+
+	code, _, errOut := runCLI("--project", root, "apply", csPath, "--lock-timeout", "200ms")
+	if code != 4 {
+		t.Fatalf("cross-process apply exit = %d, want 4 (%s)", code, errOut)
+	}
+}
+
+// TestHelperHoldLock is a helper process used by TestCrossProcessLockReturnsBusy.
+func TestHelperHoldLock(t *testing.T) {
+	if os.Getenv("LEM_HELPER_HOLD") != "1" {
+		return
+	}
+	root := os.Getenv("LEM_HELPER_ROOT")
+	l, err := core.Open(root, "progress")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	lock, err := core.AcquireLock(l.Dir, 5*time.Second)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	defer func() { _ = lock.Release() }()
+	fmt.Println("LOCKED")
+	time.Sleep(30 * time.Second)
+}
+
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

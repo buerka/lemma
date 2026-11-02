@@ -1,0 +1,56 @@
+version: 2
+
+project_name: lemma
+
+builds:
+  - id: lem
+    main: ./cmd/lem
+    binary: lem
+    flags:
+      - -trimpath
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/buerka/lemma/internal/cli.Version={{ .Version }}
+  - id: lemma
+    main: ./cmd/lemma
+    binary: lemma
+    flags:
+      - -trimpath
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/buerka/lemma/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: default
+    ids: [lem, lemma]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: buerka
+    name: lemma
+  draft: false
+  prerelease: auto
+  name_template: "Lemma {{ .Tag }}"

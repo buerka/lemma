@@ -4,6 +4,9 @@
 
 **Name:** Lemma · **Command:** `lem` (alias: `lemma`) · **Status:** v0.1 implemented · **Go:** 1.22+ · **License:** MIT
 
+[![ci](https://github.com/buerka/lemma/actions/workflows/ci.yml/badge.svg)](https://github.com/buerka/lemma/actions/workflows/ci.yml)
+[![release](https://github.com/buerka/lemma/actions/workflows/release.yml/badge.svg)](https://github.com/buerka/lemma/actions/workflows/release.yml)
+
 项目名是 **Lemma**，默认命令是 **`lem`**；`lemma` 作为完整别名保留。
 
 `lem` 让主 agent 只做流程管理，不碰具体实现：worker 写代码、跑实验，主 agent 只看结构化摘要；人类通过 `REVIEW.md`、哈希批准和 git commit 掌握每一次状态变更。
@@ -299,7 +302,21 @@ Host gpu
 
 ## Quick start
 
-### Install lem
+### Install a release binary
+
+每个 `v*` tag 会通过 GitHub Actions + GoReleaser 生成 darwin/linux、amd64/arm64
+的 `tar.gz`、`checksums.txt` 和 GitHub Release：
+
+```bash
+gh release download --repo buerka/lemma --pattern 'lemma_*_darwin_arm64.tar.gz'
+tar -xzf lemma_*_darwin_arm64.tar.gz
+./lem version
+# 压缩包同时包含 lem 和 lemma 两个二进制
+```
+
+也可以从源码构建。
+
+### Build from source
 
 ```bash
 git clone https://github.com/buerka/lemma.git
@@ -471,6 +488,10 @@ lemma/                        # this tool
   README.md
   LICENSE
   go.mod
+  go.sum
+  .goreleaser.yaml
+  .github/workflows/ci.yml
+  .github/workflows/release.yml
   cmd/lem/main.go            # CLI entry
   cmd/lemma/main.go          # full alias
   internal/core/              # state machine, changeset, hash, git
@@ -948,7 +969,24 @@ lem apply progress/changesets/cs-20261102-002.json
 - **YAML**: `gopkg.in/yaml.v3`; keep `project.yaml` / `tasks.yaml` structs explicit.
 - **Logging**: CLI output to stdout; errors to stderr. No background logging.
 - **Tests**: `go test -race ./...`; unit tests for canonical hashing and event chains; integration tests use temp git repos, 10 concurrent applies, two projects, and an injected apply failure.
-- **Release**: `CGO_ENABLED=0` cross-compile for darwin/linux amd64/arm64; optional GoReleaser.
+- **Release**: GoReleaser v2 builds `lem` and `lemma` with `CGO_ENABLED=0` for
+  darwin/linux amd64/arm64, writes `checksums.txt`, and publishes a GitHub
+  Release from a `v*` tag.
+
+### CI and release process
+
+- `ci.yml` runs on every push/PR for Ubuntu and macOS, Go 1.22.x and stable:
+  `gofmt -l`, `go vet`, `go test -race`, `go build`, plus a GoReleaser `check`
+  and a full `--snapshot` cross-compile.
+- `release.yml` runs on `v*` tags: re-runs the race tests, then GoReleaser
+  publishes the archives, checksums, and GitHub Release.
+- Dependabot checks Go modules and GitHub Actions weekly.
+- Release command:
+
+  ```bash
+  git tag -a v0.1.0 -m "Lemma v0.1.0"
+  git push origin v0.1.0
+  ```
 
 ### Implementation status and known limits
 
