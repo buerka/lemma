@@ -31,7 +31,7 @@ func cmdTaskAdd(c *Context, args []string) error {
 	title := fs.String("title", "", "task title")
 	phase := fs.String("phase", "", "phase, for example P0")
 	owner := fs.String("owner", schema.OwnerAgent, "owner: agent|human")
-	status := fs.String("status", schema.StatusTodo, "status: todo|doing|blocked|done")
+	status := fs.String("status", schema.StatusTodo, "status: todo|doing|blocked (done requires plan/approve/apply)")
 	expected := fs.String("expected-revision", "", "require this current revision")
 	var acceptance, depends, artifacts stringList
 	fs.Var(&acceptance, "acceptance", "acceptance criterion (repeatable)")
@@ -54,6 +54,9 @@ func cmdTaskAdd(c *Context, args []string) error {
 	}
 	if !schema.ValidTaskStatus(*status) {
 		return core.Errorf(core.CodeUsage, "invalid --status %q", *status)
+	}
+	if *status == schema.StatusDone {
+		return core.Errorf(core.CodeUsage, "task add cannot create a done task; use lem plan --task <id> --status done --evidence <path> after the task exists")
 	}
 	if !schema.ValidOwner(*owner) {
 		return core.Errorf(core.CodeUsage, "invalid --owner %q", *owner)
@@ -117,7 +120,7 @@ func cmdTaskUpdate(c *Context, args []string) error {
 	title := fs.String("title", "", "new title")
 	phase := fs.String("phase", "", "new phase")
 	owner := fs.String("owner", "", "new owner: agent|human")
-	status := fs.String("status", "", "new status: todo|doing|blocked|done")
+	status := fs.String("status", "", "new status: todo|doing|blocked (done requires plan/approve/apply)")
 	expected := fs.String("expected-revision", "", "require this current revision")
 	var acceptance, depends stringList
 	fs.Var(&acceptance, "acceptance", "replace acceptance criteria (repeatable)")
@@ -142,6 +145,9 @@ func cmdTaskUpdate(c *Context, args []string) error {
 	}
 	if set["status"] && !schema.ValidTaskStatus(*status) {
 		return core.Errorf(core.CodeUsage, "invalid --status %q", *status)
+	}
+	if set["status"] && *status == schema.StatusDone {
+		return core.Errorf(core.CodeUsage, "task update cannot set done directly; use lem plan --task %s --status done --evidence <path>, then review/approve/apply", *id)
 	}
 	if set["owner"] && !schema.ValidOwner(*owner) {
 		return core.Errorf(core.CodeUsage, "invalid --owner %q", *owner)

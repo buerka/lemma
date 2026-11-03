@@ -429,6 +429,16 @@ lem task add \
   --acceptance "无 observation 泄漏"
 ```
 
+**Direct writes vs human approval**
+
+- 直接写入：`init`、`task add/update`（目标状态只能是 `todo` / `doing` /
+  `blocked`）、`run start`（只把 `todo` 推进到 `doing`）、`run finish`、
+  `project add/remove`。这些命令仍在项目锁、revision、事件链和 git commit 下执行。
+- 需要审批：任何把任务置为 `done` 的变更必须走
+  `lem plan --task ... --status done --evidence ...` → `review` → `approve` →
+  `apply`。`task add --status done` 和 `task update --status done` 会直接拒绝。
+- `approve` 只写 `gates.jsonl`；`apply` 才写任务状态和 receipt。
+
 ### Start a run
 
 ```bash

@@ -939,3 +939,34 @@ func TestSymlinkRootCleanRepoNotDirty(t *testing.T) {
 		t.Fatalf("symlinked clean repo reported dirty: %+v", start.Spec.Code)
 	}
 }
+
+func TestDirectDoneTransitionRejected(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	root := newProjectRoot(t, "done-boundary")
+	initDemo(t, root, "done-boundary")
+
+	code, _, _ := runCLI("--project", root, "task", "add", "--id", "T2", "--title", "direct done", "--status", "done")
+	if code != 2 {
+		t.Fatalf("task add --status done exit = %d, want 2", code)
+	}
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	code, _, _ = runCLI("--project", root, "task", "update", "T1", "--status", "done")
+	if code != 2 {
+		t.Fatalf("task update --status done exit = %d, want 2", code)
+	}
+	tasks := decodeJSON[[]schema.Task](t, mustRun(t, "--json", "--project", root, "task", "list"))
+	if len(tasks) != 1 || tasks[0].Status != schema.StatusTodo {
+		t.Fatalf("direct update changed task state: %+v", tasks)
+	}
+
+	evidence := filepath.Join(root, "evidence.json")
+	if err := os.WriteFile(evidence, []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	csPath := filepath.Join(root, "progress", "changesets", "cs-done.json")
+	mustRun(t, "--json", "--project", root, "plan", "--task", "T1", "--status", "done",
+		"--evidence", evidence, "--out", csPath)
+	if _, err := os.Stat(csPath); err != nil {
+		t.Fatal("plan/approval path for done no longer works")
+	}
+}
