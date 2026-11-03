@@ -604,7 +604,7 @@ lemma/                        # this tool
 | `lem task add/update/list` | 管理任务图 | `tasks.yaml` + task event |
 | `lem run start` | 生成 run spec 和远端任务书 | `run_spec.json`、`REMOTE_TASK.md` |
 | `lem run finish` | 接收 runner 结果 | `manifest.json`、`metrics.json`、run event |
-| `lem run status` | 查询单次 run | 状态、日志尾部、exit code |
+| `lem run status` | 查询单次 run | 状态、远端 commit/environment、日志尾部、exit code |
 | `lem plan` | 生成变更单 | `changesets/cs-*.json` |
 | `lem review` | 渲染人类审阅页 | `REVIEW.md` |
 | `lem approve` | 人类批准变更哈希（TTY 确认或 token） | `gates.jsonl` + `approval_method` |
@@ -657,15 +657,24 @@ lemma/                        # this tool
   "seed": 0,
   "host": "gpu",
   "status": "succeeded",
-  "code": {"repo": "git@github.com:you/project.git", "commit": "<sha>"},
+  "code": {"repo": "/remote/project", "commit": "<remote sha>", "dirty": false},
   "config_hash": "sha256:...",
   "data": {"uri": "ssh://gpu/~/data/dataset.h5", "sha256": "..."},
+  "environment": {
+    "python_version": "Python 3.12.1",
+    "pip_freeze_hash": "sha256:...",
+    "nvidia_smi_hash": "sha256:..."
+  },
+  "environment_hash": "sha256:...",
   "metrics": {"macro_f2": 0.89},
   "artifacts": [
     {"name": "checkpoint", "uri": "ssh://gpu/~/.lem-runs/.../checkpoint.pt", "sha256": "..."}
   ]
 }
 ```
+
+`code` / `environment` 由远端 runner 在 `remote.workdir` 实测后覆盖本地 spec 值；
+`environment_hash` 是远端 environment map 的 canonical JSON SHA-256。
 
 ### Event
 
@@ -883,7 +892,11 @@ cd "$WORKDIR"
 echo $? > "$RUN_DIR/exit_code"
 ```
 
-`runner.py` 读 `run_spec.json`，校验输入哈希，执行 `command`，把输出哈希写进 `manifest.json`。它不依赖 `lem`，可以单独放在远端。
+`runner.py` 读 `run_spec.json`，校验输入哈希，执行 `command`，在
+`remote.workdir` 重新采集 `git rev-parse HEAD`、dirty patch hash、
+`python --version`、`pip freeze` 和 `nvidia-smi`（存在时），把远端真实的
+`code` / `environment` / `environment_hash` 以及输出哈希写入结果。它不依赖
+`lem`，可以单独放在远端。
 
 ### Why not put SSH in `lem`
 
@@ -941,7 +954,7 @@ predictions/
 | `config_hash` | canonical JSON 或配置文件字节的 SHA-256 |
 | `data_sha256` | 本地 `sha256sum <data_path>`；远端 URI 由 `--data-sha256` 提供 |
 | `split_hash` | split manifest hash |
-| `environment_hash` | `pip freeze` + `nvidia-smi` hash |
+| `environment_hash` | 远端 Python 版本、`pip freeze`、`nvidia-smi` 的 canonical JSON SHA-256 |
 | `seed` | run spec |
 | `metrics` | `metrics.json` |
 | `artifacts` | URI + SHA-256 |

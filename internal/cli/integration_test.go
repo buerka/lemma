@@ -1115,3 +1115,118 @@ func TestApprovalGateSecurity(t *testing.T) {
 		t.Fatalf("verify with token/TTY gates: %+v", report.Issues)
 	}
 }
+
+func TestRunFinishUsesRemoteCodeAndEnvironment(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "remote-code")
+	initDemo(t, root, "remote-code")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1", "--command", "true")
+	runID := "T1.default.default.seed0"
+	runDir := filepath.Join(root, "progress", "runs", runID)
+	remote := map[string]any{
+		"run_id": runID, "status": "succeeded", "exit_code": 0,
+		"code": map[string]any{
+			"repo": "/remote/code", "commit": "remote-commit-sha", "dirty": false,
+		},
+		"environment": map[string]string{
+			"python_version":  "Python 3.12.1",
+			"pip_freeze_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	}
+	raw, _ := json.Marshal(remote)
+	if err := os.WriteFile(filepath.Join(runDir, "remote_result.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, "--json", "--project", root, "run", "finish", runID,
+		"--result", filepath.Join(runDir, "remote_result.json"))
+	l, err := core.Open(root, "progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := core.LoadRunResult(l, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Code.Commit != "remote-commit-sha" {
+		t.Fatalf("result code commit = %q, want remote value", result.Code.Commit)
+	}
+	if result.Environment["python_version"] != "Python 3.12.1" {
+		t.Fatalf("remote environment missing: %+v", result.Environment)
+	}
+	wantHash, err := core.HashValue(remote["environment"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EnvironmentHash != wantHash {
+		t.Fatalf("environment_hash = %s, want %s", result.EnvironmentHash, wantHash)
+	}
+	statusJSON := mustRun(t, "--json", "--project", root, "run", "status", runID)
+	var status struct {
+		Result *schema.RunResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Result == nil || status.Result.Code.Commit != "remote-commit-sha" {
+		t.Fatalf("run status did not expose remote code: %s", statusJSON)
+	}
+	human := mustRun(t, "--project", root, "run", "status", runID)
+	if !strings.Contains(human, "remote-commit-sha") || !strings.Contains(human, "(remote)") {
+		t.Fatalf("run status human output lacks remote commit:\n%s", human)
+	}
+}
+
+func TestRunnerRecordsRemoteFingerprint(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := t.TempDir()
+	workdir := newGitWorkdir(t)
+	code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "runner-demo",
+		"--host", "local", "--workdir", workdir, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1", "--command", "true")
+	runID := "T1.default.default.seed0"
+	runDir := filepath.Join(root, "progress", "runs", runID)
+	cmd := exec.Command(python, filepath.Join(runDir, "runner.py"), "--spec", filepath.Join(runDir, "run_spec.json"))
+	cmd.Dir = runDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("runner failed: %v\n%s", err, output)
+	}
+	raw, err := os.ReadFile(filepath.Join(runDir, "remote_result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var remote schema.RemoteResult
+	if err := json.Unmarshal(raw, &remote); err != nil {
+		t.Fatal(err)
+	}
+	wantCommit := runGit(t, workdir, "rev-parse", "HEAD")
+	if remote.Code.Commit != wantCommit {
+		t.Fatalf("runner code commit = %q, want %q", remote.Code.Commit, wantCommit)
+	}
+	if remote.Code.Dirty {
+		t.Fatalf("runner reported a clean workdir as dirty: %+v", remote.Code)
+	}
+	if remote.Environment["python_version"] == "" {
+		t.Fatalf("runner did not record python version: %+v", remote.Environment)
+	}
+	if !schema.ValidHash(remote.EnvironmentHash) {
+		t.Fatalf("runner environment_hash = %q", remote.EnvironmentHash)
+	}
+	mustRun(t, "--json", "--project", root, "run", "finish", runID,
+		"--result", filepath.Join(runDir, "remote_result.json"))
+	human := mustRun(t, "--project", root, "run", "status", runID)
+	if !strings.Contains(human, wantCommit) {
+		t.Fatalf("run status does not show remote commit:\n%s", human)
+	}
+}

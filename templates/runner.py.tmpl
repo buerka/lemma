@@ -2,8 +2,9 @@
 """Lemma remote runner.
 
 Reads run_spec.json, verifies declared input hashes when the files exist,
-executes the command, and writes manifest.json, metrics.json, result.json and
-remote_result.json into the run directory.
+executes the command, records the remote git/environment fingerprint, and writes
+manifest.json, metrics.json, result.json and remote_result.json into the run
+directory.
 
 This file is intentionally dependency-free and does not import lemma.
 """
@@ -24,8 +25,69 @@ def sha256_file(path):
     return "sha256:" + h.hexdigest()
 
 
+def sha256_text(text):
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def now():
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def run_command(command, cwd=None, env=None):
+    """Run a command and return (returncode, combined stdout/stderr)."""
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return proc.returncode, (proc.stdout or "").strip()
+    except Exception as exc:  # noqa: BLE001 - runner must report any failure
+        return 1, str(exc)
+
+
+def collect_code(workdir, spec):
+    """Record the code state that actually exists on the remote host."""
+    code = dict(spec.get("code") or {})
+    rc, repo = run_command(["git", "rev-parse", "--show-toplevel"], cwd=workdir)
+    if rc == 0 and repo:
+        code["repo"] = repo
+    rc, commit = run_command(["git", "rev-parse", "HEAD"], cwd=workdir)
+    if rc == 0 and commit:
+        code["commit"] = commit
+    rc_diff, diff = run_command(["git", "diff", "HEAD"], cwd=workdir)
+    rc_status, status = run_command(
+        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=workdir
+    )
+    if rc_diff == 0 and rc_status == 0:
+        if status:
+            code["dirty"] = True
+            code["patch_hash"] = sha256_text(diff + "\n--status--\n" + status)
+        else:
+            code["dirty"] = False
+            code["patch_hash"] = ""
+    return code
+
+
+def collect_environment(python, workdir, env):
+    """Record remote interpreter/driver hashes, omitting unavailable tools."""
+    environment = {}
+    rc, version = run_command([python, "--version"], cwd=workdir, env=env)
+    if rc == 0 and version:
+        environment["python_version"] = version.splitlines()[0]
+    rc, freeze = run_command([python, "-m", "pip", "freeze"], cwd=workdir, env=env)
+    if rc == 0:
+        environment["pip_freeze_hash"] = sha256_text(freeze)
+    rc, nvidia = run_command(["nvidia-smi"], cwd=workdir, env=env)
+    if rc == 0:
+        environment["nvidia_smi_hash"] = sha256_text(nvidia)
+    environment_hash = sha256_text(
+        json.dumps(environment, sort_keys=True, separators=(",", ":"))
+    )
+    return environment, environment_hash
 
 
 def main():
@@ -43,6 +105,10 @@ def main():
     status = "succeeded"
     error = ""
 
+    workdir = os.path.expanduser(spec.get("workdir") or os.getcwd())
+    run_env = os.environ.copy()
+    run_env.update(spec.get("env") or {})
+
     for item in spec.get("inputs", []):
         path = os.path.expanduser(item.get("path", ""))
         expected = item.get("sha256", "")
@@ -54,14 +120,12 @@ def main():
                 break
 
     if status == "succeeded":
-        env = os.environ.copy()
-        env.update(spec.get("env") or {})
         try:
             proc = subprocess.run(
                 spec["command"],
                 shell=True,
-                cwd=os.path.expanduser(spec.get("workdir") or os.getcwd()),
-                env=env,
+                cwd=workdir,
+                env=run_env,
             )
             exit_code = proc.returncode
             if exit_code != 0:
@@ -71,6 +135,11 @@ def main():
             exit_code = 1
             status = "failed"
             error = str(exc)
+
+    remote_code = collect_code(workdir, spec)
+    environment, environment_hash = collect_environment(
+        spec.get("python") or "python3", workdir, run_env
+    )
 
     finished = now()
     artifacts = []
@@ -128,7 +197,9 @@ def main():
         "artifacts": artifacts,
         "manifest": manifest,
         "error": error,
-        "code": spec.get("code", {}),
+        "code": remote_code,
+        "environment": environment,
+        "environment_hash": environment_hash,
         "config_hash": spec.get("config_hash", ""),
         "data": spec.get("data"),
     }

@@ -216,9 +216,22 @@ func cmdRunStatus(c *Context, args []string) error {
 	fmt.Fprintf(c.Out, "status:  %s (exit %d)\n", status, exit)
 	fmt.Fprintf(c.Out, "host:    %s\n", spec.Host)
 	fmt.Fprintf(c.Out, "command: %s\n", spec.Command)
-	fmt.Fprintf(c.Out, "code:    %s %s\n", spec.Code.Commit, spec.Code.PatchHash)
+	code := spec.Code
+	codeSource := "local spec"
+	if result != nil && result.Code.Commit != "" {
+		code = result.Code
+		codeSource = "remote"
+	}
+	fmt.Fprintf(c.Out, "code:    %s %s (%s)\n", code.Commit, code.PatchHash, codeSource)
 	fmt.Fprintf(c.Out, "config:  %s\n", spec.ConfigHash)
 	if result != nil {
+		if result.EnvironmentHash != "" {
+			extra := ""
+			if py := result.Environment["python_version"]; py != "" {
+				extra = " (" + py + ")"
+			}
+			fmt.Fprintf(c.Out, "env:     %s%s\n", result.EnvironmentHash, extra)
+		}
 		if len(result.Metrics) > 0 {
 			keys := make([]string, 0, len(result.Metrics))
 			for k := range result.Metrics {
