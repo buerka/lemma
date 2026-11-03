@@ -1309,3 +1309,22 @@ func TestArtifactRemoteVerificationAndStrict(t *testing.T) {
 		t.Fatalf("strict artifact report: %+v", strictReport)
 	}
 }
+
+func TestNestedHelp(t *testing.T) {
+	cases := [][]string{
+		{"run", "start", "--help"},
+		{"run", "finish", "--help"},
+		{"task", "add", "--help"},
+		{"project", "add", "--help"},
+		{"artifact", "list", "--help"},
+	}
+	for _, args := range cases {
+		code, out, errOut := runCLI(args...)
+		if code != 0 {
+			t.Fatalf("%v exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", args, code, out, errOut)
+		}
+		if !strings.Contains(out, "Usage:") {
+			t.Fatalf("%v did not print usage:\n%s", args, out)
+		}
+	}
+}
