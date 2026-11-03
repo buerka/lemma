@@ -32,6 +32,30 @@ func mustRun(t *testing.T, args ...string) string {
 	return out
 }
 
+const testApprovalToken = "test-approval-token"
+
+func ensureApprovalToken(t *testing.T) {
+	t.Helper()
+	if os.Getenv("LEM_CONFIG_DIR") == "" {
+		t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	}
+	dir := core.ConfigDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "approval-token"), []byte(testApprovalToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustApprove(t *testing.T, project, ref string, extra ...string) string {
+	t.Helper()
+	ensureApprovalToken(t)
+	args := []string{"--json", "--project", project, "approve", ref, "--by", "human", "--token", testApprovalToken}
+	args = append(args, extra...)
+	return mustRun(t, args...)
+}
+
 func decodeJSON[T any](t *testing.T, s string) T {
 	t.Helper()
 	var v T
@@ -156,11 +180,13 @@ func TestEndToEndLedgerFlow(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "progress", "REVIEW.md")); err != nil {
 		t.Fatal("REVIEW.md missing")
 	}
-	approveOut := decodeJSON[map[string]any](t, mustRun(t, "--json", "--project", root,
-		"approve", csPath, "--by", "human", "--gate", "G4"))
+	approveOut := decodeJSON[map[string]any](t, mustApprove(t, root, csPath, "--gate", "G4"))
 	gate := approveOut["gate"].(map[string]any)
 	if gate["changeset_hash"] != csHash {
 		t.Fatalf("gate hash = %v, want %s", gate["changeset_hash"], csHash)
+	}
+	if gate["approval_method"] != "token" {
+		t.Fatalf("approval_method = %v, want token", gate["approval_method"])
 	}
 	approvedFiles := runGit(t, filepath.Join(root, "progress"), "show", "--pretty=format:", "--name-only", "HEAD")
 	if strings.TrimSpace(approvedFiles) != "gates.jsonl" {
@@ -235,7 +261,7 @@ func TestConcurrentApplyOnlyOneWins(t *testing.T) {
 		p := filepath.Join(root, "progress", "changesets", fmt.Sprintf("cs-conc-%02d.json", i+1))
 		mustRun(t, "--json", "--project", root, "plan",
 			"--task", fmt.Sprintf("T%d", i+1), "--status", "doing", "--out", p)
-		mustRun(t, "--json", "--project", root, "approve", p, "--by", "human")
+		mustApprove(t, root, p)
 		paths = append(paths, p)
 	}
 
@@ -332,7 +358,7 @@ func TestMultiProjectIsolation(t *testing.T) {
 
 	csPath := filepath.Join(rootA, "progress", "changesets", "cs-alpha.json")
 	mustRun(t, "--json", "--project", "alpha", "plan", "--task", "TA", "--status", "doing", "--out", csPath)
-	mustRun(t, "--json", "--project", "alpha", "approve", csPath, "--by", "human")
+	mustApprove(t, "alpha", csPath)
 	mustRun(t, "--json", "--project", "alpha", "apply", csPath)
 
 	alphaAfter := decodeJSON[core.Summary](t, mustRun(t, "--json", "--project", "alpha", "status"))
@@ -390,7 +416,7 @@ func TestApplyCrashRollbackAndBusy(t *testing.T) {
 	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
 	csPath := filepath.Join(root, "progress", "changesets", "cs-crash.json")
 	mustRun(t, "--json", "--project", root, "plan", "--task", "T1", "--status", "doing", "--out", csPath)
-	mustRun(t, "--json", "--project", root, "approve", csPath, "--by", "human")
+	mustApprove(t, root, csPath)
 
 	l, err := core.Open(root, "progress")
 	if err != nil {
@@ -749,7 +775,7 @@ func TestCrossProcessLockReturnsBusy(t *testing.T) {
 	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
 	csPath := filepath.Join(root, "progress", "changesets", "cs-lock.json")
 	mustRun(t, "--json", "--project", root, "plan", "--task", "T1", "--status", "doing", "--out", csPath)
-	mustRun(t, "--json", "--project", root, "approve", csPath, "--by", "human")
+	mustApprove(t, root, csPath)
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperHoldLock$")
 	cmd.Env = append(os.Environ(), "LEM_HELPER_HOLD=1", "LEM_HELPER_ROOT="+root)
@@ -968,5 +994,124 @@ func TestDirectDoneTransitionRejected(t *testing.T) {
 		"--evidence", evidence, "--out", csPath)
 	if _, err := os.Stat(csPath); err != nil {
 		t.Fatal("plan/approval path for done no longer works")
+	}
+}
+
+func TestApprovalGateSecurity(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "approval")
+	initDemo(t, root, "approval")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task1")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T2", "--title", "task2")
+	cs1 := filepath.Join(root, "progress", "changesets", "cs-approval-1.json")
+	cs2 := filepath.Join(root, "progress", "changesets", "cs-approval-2.json")
+	mustRun(t, "--json", "--project", root, "plan", "--task", "T1", "--status", "doing", "--out", cs1)
+	mustRun(t, "--json", "--project", root, "plan", "--task", "T2", "--status", "doing", "--out", cs2)
+
+	runApprove := func(csPath string, stdin string, isTTY bool, token string) (int, string, string) {
+		args := []string{"--json", "--project", root, "approve", csPath, "--by", "human"}
+		if token != "" {
+			args = append(args, "--token", token)
+		}
+		var out, errOut bytes.Buffer
+		code := RunWithIO(args, strings.NewReader(stdin), &out, &errOut, isTTY)
+		return code, out.String(), errOut.String()
+	}
+
+	gatesPath := filepath.Join(root, "progress", "gates.jsonl")
+	countGates := func() int {
+		raw, err := os.ReadFile(gatesPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			if strings.TrimSpace(line) != "" {
+				n++
+			}
+		}
+		return n
+	}
+
+	code, _, errOut := runApprove(cs1, "", false, "")
+	if code != 1 {
+		t.Fatalf("non-TTY approval without token exit = %d, want 1 (%s)", code, errOut)
+	}
+	if countGates() != 0 {
+		t.Fatal("rejected approval wrote a gate")
+	}
+
+	tokenPath := filepath.Join(core.ConfigDir(), "approval-token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte(testApprovalToken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tokenPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runApprove(cs1, "", false, testApprovalToken)
+	if code != 1 || !strings.Contains(out+errOut, "chmod 600") {
+		t.Fatalf("insecure token file exit=%d out=%s err=%s", code, out, errOut)
+	}
+
+	if err := os.Chmod(tokenPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = runApprove(cs1, "", false, testApprovalToken)
+	if code != 0 {
+		t.Fatalf("token approval exit=%d out=%s err=%s", code, out, errOut)
+	}
+	var tokenResult struct {
+		Gate schema.Gate `json:"gate"`
+	}
+	if err := json.Unmarshal([]byte(out), &tokenResult); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResult.Gate.ApprovalMethod != "token" {
+		t.Fatalf("token gate method = %q", tokenResult.Gate.ApprovalMethod)
+	}
+
+	raw, err := os.ReadFile(cs2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cs schema.Changeset
+	if err := json.Unmarshal(raw, &cs); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := core.ComputeChangesetHash(cs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	short := strings.TrimPrefix(hash, "sha256:")[:12]
+	code, _, _ = runApprove(cs2, "wrong\n", true, "")
+	if code != 1 {
+		t.Fatalf("wrong TTY confirmation exit = %d, want 1", code)
+	}
+	if countGates() != 1 {
+		t.Fatal("wrong TTY confirmation wrote a gate")
+	}
+	code, out, errOut = runApprove(cs2, short+"\n", true, "")
+	if code != 0 {
+		t.Fatalf("TTY approval exit=%d out=%s err=%s", code, out, errOut)
+	}
+	var ttyResult struct {
+		Gate schema.Gate `json:"gate"`
+	}
+	if err := json.Unmarshal([]byte(out), &ttyResult); err != nil {
+		t.Fatal(err)
+	}
+	if ttyResult.Gate.ApprovalMethod != "tty" {
+		t.Fatalf("TTY gate method = %q", ttyResult.Gate.ApprovalMethod)
+	}
+	if countGates() != 2 {
+		t.Fatalf("gate count = %d, want 2", countGates())
+	}
+	report := decodeJSON[core.VerifyReport](t, mustRun(t, "--json", "--project", root, "verify"))
+	if !report.OK {
+		t.Fatalf("verify with token/TTY gates: %+v", report.Issues)
 	}
 }

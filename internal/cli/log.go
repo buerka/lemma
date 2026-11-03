@@ -160,7 +160,11 @@ func cmdShow(c *Context, args []string) error {
 			fmt.Fprintf(c.Out, "evidence:  %s %s (%s)\n", e, h, status)
 		}
 		if gate != nil {
-			fmt.Fprintf(c.Out, "approved:  yes, by %s at %s\n", gate.ApprovedBy, gate.ApprovedAt)
+			method := gate.ApprovalMethod
+			if method == "" {
+				method = "legacy"
+			}
+			fmt.Fprintf(c.Out, "approved:  yes, by %s at %s (method %s)\n", gate.ApprovedBy, gate.ApprovedAt, method)
 		} else {
 			fmt.Fprintln(c.Out, "approved:  no")
 		}

@@ -489,6 +489,28 @@ lem verify
 receipt（两个 commit），因此 `progress/` 始终是干净的，`verify` 能同时找到
 事件链、gate 和 receipt。
 
+### Approval gate
+
+`lem approve` 默认要求交互式 TTY：它会显示 changeset hash 的前 12 个十六进制
+字符，要求人工输入确认，并在 `gates.jsonl` 记录 `approval_method: "tty"`。
+没有 TTY 时默认拒绝，防止 agent 在非交互环境里自批 `--by human`。
+
+非交互环境只能使用 token：
+
+```bash
+install -m 600 /dev/null ~/.config/lem/approval-token
+printf '%s' 'a-long-random-token' > ~/.config/lem/approval-token
+lem approve progress/changesets/cs-....json --by human \
+  --token "$(cat ~/.config/lem/approval-token)"
+```
+
+- token 文件默认是 `~/.config/lem/approval-token`；`$LEM_CONFIG_DIR` 或
+  `$XDG_CONFIG_HOME/lem` 可覆盖，文件必须是 0600（不能有 group/world 权限）。
+- token 模式记录 `approval_method: "token"`。
+- 旧 gate 没有 `approval_method` 时按 `legacy` 处理，`verify` 仍然接受。
+- 这是**流程约束，不是密码学证明**：能写 `gates.jsonl` 的人仍然可以伪造记录。
+  它只阻止非交互 agent 随手自批。
+
 ### Resume a session
 
 新会话的主 agent 只读三样东西：
@@ -585,7 +607,7 @@ lemma/                        # this tool
 | `lem run status` | 查询单次 run | 状态、日志尾部、exit code |
 | `lem plan` | 生成变更单 | `changesets/cs-*.json` |
 | `lem review` | 渲染人类审阅页 | `REVIEW.md` |
-| `lem approve` | 人类批准变更哈希 | `gates.jsonl` |
+| `lem approve` | 人类批准变更哈希（TTY 确认或 token） | `gates.jsonl` + `approval_method` |
 | `lem apply` | 原子应用 + git commit | `receipts/cs-*.json` |
 | `lem log` | 回溯查询 | Markdown / JSON |
 | `lem show` | 查看单个 changeset / receipt | Markdown / JSON |
@@ -753,7 +775,9 @@ worker 必须返回固定 schema：
 | G3 Full run | 是否允许全量训练？预算多少？ | pilot 结果 + 预算 |
 | G4 Conclusion | 这个结论是否有足够证据？ | run 表 + 置信区间 |
 
-批准记录写入 `gates.jsonl`，包含 `changeset_hash`、`approved_by`、`approved_at`。
+批准记录写入 `gates.jsonl`，包含 `changeset_hash`、`approved_by`、`approved_at`
+和 `approval_method`（`tty` / `token`；旧记录缺省为 legacy）。具体 gate 机制
+见 “Approval gate”。
 
 ---
 

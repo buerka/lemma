@@ -26,19 +26,35 @@ type Globals struct {
 }
 
 type Context struct {
+	In       io.Reader
 	Out      io.Writer
 	Err      io.Writer
 	Globals  Globals
 	ExitCode int
+	IsTTY    bool
 }
 
+// Run is the production entrypoint. TTY detection is deliberately local: the
+// approval gate is a workflow constraint, not a cryptographic proof.
 func Run(args []string, out, errOut io.Writer) int {
+	isTTY := false
+	if info, err := os.Stdin.Stat(); err == nil {
+		isTTY = info.Mode()&os.ModeCharDevice != 0
+	}
+	return RunWithIO(args, os.Stdin, out, errOut, isTTY)
+}
+
+// RunWithIO allows tests to inject stdin and the TTY decision.
+func RunWithIO(args []string, in io.Reader, out, errOut io.Writer, isTTY bool) int {
+	if in == nil {
+		in = os.Stdin
+	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
 		printUsage(out)
 		return 0
 	}
 	g, rest, err := parseGlobals(args)
-	ctx := &Context{Out: out, Err: errOut, Globals: g}
+	ctx := &Context{In: in, Out: out, Err: errOut, Globals: g, IsTTY: isTTY}
 	if err != nil {
 		return reportError(ctx, err)
 	}

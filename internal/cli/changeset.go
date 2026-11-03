@@ -116,8 +116,15 @@ func cmdApprove(c *Context, args []string) error {
 	by := fs.String("by", "", "approver identity (for example: human)")
 	gate := fs.String("gate", "", "gate label, for example G1")
 	note := fs.String("note", "", "approval note")
+	token := fs.String("token", "", "non-interactive approval token (must match <config>/approval-token)")
 	expected := fs.String("expected-revision", "", "require this current revision")
-	ok, err := parseFlags(c, fs, args, "Usage: lem approve <changeset-id|path> --by human [--gate G1] [--note ...]\n")
+	ok, err := parseFlags(c, fs, args, `Usage: lem approve <changeset-id|path> --by human [--gate G1] [--note ...]
+       [--token TOKEN] [--expected-revision HASH]
+
+Without --token, approval requires a TTY and confirmation of the changeset hash.
+With --token, the token must match <config>/approval-token (mode 0600).
+This is a workflow constraint, not a cryptographic proof.
+`)
 	if !ok {
 		return err
 	}
@@ -129,8 +136,13 @@ func cmdApprove(c *Context, args []string) error {
 		return err
 	}
 	ref := resolveChangesetRef(l, fs.Arg(0))
+	method, confirmedHash, err := authorizeApproval(c, l, ref, *token)
+	if err != nil {
+		return err
+	}
 	g, already, err := core.Approve(l, ref, core.ApproveOptions{
-		By: *by, Gate: *gate, Note: *note, ExpectedRevision: *expected,
+		By: *by, Gate: *gate, Note: *note, ApprovalMethod: method,
+		ExpectedHash: confirmedHash, ExpectedRevision: *expected,
 		LockTimeout: c.Globals.LockTimeout,
 	})
 	if err != nil {
@@ -147,6 +159,9 @@ func cmdApprove(c *Context, args []string) error {
 	}
 	fmt.Fprintf(c.Out, "approved %s at %s\n", g.ChangesetID, g.ChangesetHash)
 	fmt.Fprintf(c.Out, "  by: %s\n  at: %s\n", g.ApprovedBy, g.ApprovedAt)
+	if g.ApprovalMethod != "" {
+		fmt.Fprintf(c.Out, "  method: %s\n", g.ApprovalMethod)
+	}
 	if g.Gate != "" {
 		fmt.Fprintf(c.Out, "  gate: %s\n", g.Gate)
 	}

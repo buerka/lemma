@@ -293,6 +293,8 @@ type ApproveOptions struct {
 	By               string
 	Gate             string
 	Note             string
+	ApprovalMethod   string
+	ExpectedHash     string
 	ExpectedRevision string
 	LockTimeout      time.Duration
 }
@@ -323,6 +325,9 @@ func Approve(l *Ledger, ref string, opts ApproveOptions) (*schema.Gate, bool, er
 	if got != cs.Hash {
 		return nil, false, Errorf(CodeConflict, "changeset hash mismatch: recorded %s, computed %s; re-plan", cs.Hash, got)
 	}
+	if opts.ExpectedHash != "" && got != opts.ExpectedHash {
+		return nil, false, Errorf(CodeConflict, "changeset changed after confirmation: confirmed %s, current %s", opts.ExpectedHash, got)
+	}
 	gates, err := l.ReadGates()
 	if err != nil {
 		return nil, false, err
@@ -346,11 +351,12 @@ func Approve(l *Ledger, ref string, opts ApproveOptions) (*schema.Gate, bool, er
 		return nil, false, revisionConflict(cs.BaseRevision, rev)
 	}
 	g, err := l.AppendGate(schema.Gate{
-		ChangesetID:   cs.ChangesetID,
-		ChangesetHash: cs.Hash,
-		ApprovedBy:    opts.By,
-		Gate:          opts.Gate,
-		Note:          opts.Note,
+		ChangesetID:    cs.ChangesetID,
+		ChangesetHash:  cs.Hash,
+		ApprovedBy:     opts.By,
+		Gate:           opts.Gate,
+		Note:           opts.Note,
+		ApprovalMethod: opts.ApprovalMethod,
 	})
 	if err != nil {
 		return nil, false, err

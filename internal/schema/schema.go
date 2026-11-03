@@ -260,14 +260,15 @@ func (r Receipt) Validate() error {
 
 // Gate is one line in progress/gates.jsonl.
 type Gate struct {
-	GateID        string `json:"gate_id"`
-	Project       string `json:"project"`
-	ChangesetID   string `json:"changeset_id"`
-	ChangesetHash string `json:"changeset_hash"`
-	ApprovedBy    string `json:"approved_by"`
-	ApprovedAt    string `json:"approved_at"`
-	Gate          string `json:"gate,omitempty"`
-	Note          string `json:"note,omitempty"`
+	GateID         string `json:"gate_id"`
+	Project        string `json:"project"`
+	ChangesetID    string `json:"changeset_id"`
+	ChangesetHash  string `json:"changeset_hash"`
+	ApprovedBy     string `json:"approved_by"`
+	ApprovedAt     string `json:"approved_at"`
+	Gate           string `json:"gate,omitempty"`
+	Note           string `json:"note,omitempty"`
+	ApprovalMethod string `json:"approval_method,omitempty"`
 }
 
 func (g Gate) Validate() error {
@@ -276,6 +277,11 @@ func (g Gate) Validate() error {
 	}
 	if !ValidHash(g.ChangesetHash) {
 		return errors.New("gate contains an invalid changeset hash")
+	}
+	switch g.ApprovalMethod {
+	case "", "tty", "token", "legacy":
+	default:
+		return fmt.Errorf("gate has unsupported approval_method %q", g.ApprovalMethod)
 	}
 	return nil
 }
