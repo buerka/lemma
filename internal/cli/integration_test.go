@@ -225,6 +225,20 @@ func TestEndToEndLedgerFlow(t *testing.T) {
 	if !artifactReport.OK {
 		t.Fatalf("artifact verify failed: %+v", artifactReport.Checks)
 	}
+	defaultArtifacts := decodeJSON[[]core.ArtifactEntry](t, mustRun(t, "--json", "--project", root, "artifact", "list"))
+	if len(defaultArtifacts) != 1 || defaultArtifacts[0].Kind != "artifact" {
+		t.Fatalf("artifact list default is noisy: %+v", defaultArtifacts)
+	}
+	allArtifacts := decodeJSON[[]core.ArtifactEntry](t, mustRun(t, "--json", "--project", root, "artifact", "list", "--all"))
+	hasRunfile := false
+	for _, entry := range allArtifacts {
+		if entry.Kind == "runfile" {
+			hasRunfile = true
+		}
+	}
+	if !hasRunfile {
+		t.Fatalf("artifact list --all did not include runfiles: %+v", allArtifacts)
+	}
 
 	tasks := decodeJSON[[]schema.Task](t, mustRun(t, "--json", "--project", root, "task", "list"))
 	if len(tasks) != 1 || tasks[0].Status != schema.StatusDone {

@@ -68,7 +68,8 @@ func cmdArtifact(c *Context, args []string) error {
 func cmdArtifactList(c *Context, args []string) error {
 	fs := flag.NewFlagSet("artifact list", flag.ContinueOnError)
 	runID := fs.String("run", "", "run id")
-	ok, err := parseFlags(c, fs, args, "Usage: lem artifact list [run_id] [--run ID]\n")
+	all := fs.Bool("all", false, "include runfiles as well as declared artifacts")
+	ok, err := parseFlags(c, fs, args, "Usage: lem artifact list [run_id] [--run ID] [--all]\n")
 	if !ok {
 		return err
 	}
@@ -81,7 +82,7 @@ func cmdArtifactList(c *Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	entries, err := core.ListArtifacts(l, *runID)
+	entries, err := core.ListArtifacts(l, *runID, *all)
 	if err != nil {
 		return err
 	}
@@ -92,13 +93,17 @@ func cmdArtifactList(c *Context, args []string) error {
 		fmt.Fprintln(c.Out, "no artifacts")
 		return nil
 	}
-	fmt.Fprintln(c.Out, "RUN\tKIND\tNAME\tLOCAL\tSHA256\tURI/PATH")
+	fmt.Fprintln(c.Out, "RUN\tKIND\tNAME\tLOCAL\tVERIFIED\tSHA256\tURI/PATH")
 	for _, e := range entries {
 		uri := e.URI
 		if uri == "" {
 			uri = e.Path
 		}
-		fmt.Fprintf(c.Out, "%s\t%s\t%s\t%v\t%s\t%s\n", e.RunID, e.Kind, e.Name, e.Local, shortHash(e.SHA256), uri)
+		verified := "-"
+		if e.Verified {
+			verified = "remote-verified"
+		}
+		fmt.Fprintf(c.Out, "%s\t%s\t%s\t%v\t%s\t%s\t%s\n", e.RunID, e.Kind, e.Name, e.Local, verified, shortHash(e.SHA256), uri)
 	}
 	return nil
 }

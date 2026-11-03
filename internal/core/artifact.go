@@ -64,7 +64,7 @@ func artifactRunIDs(l *Ledger, runID string) ([]string, error) {
 	return ids, nil
 }
 
-func ListArtifacts(l *Ledger, runID string) ([]ArtifactEntry, error) {
+func ListArtifacts(l *Ledger, runID string, all bool) ([]ArtifactEntry, error) {
 	ids, err := artifactRunIDs(l, runID)
 	if err != nil {
 		return nil, err
@@ -76,13 +76,15 @@ func ListArtifacts(l *Ledger, runID string) ([]ArtifactEntry, error) {
 			continue
 		}
 		runDir := l.RunDir(id)
-		for _, f := range m.Files {
-			p := filepath.Join(runDir, filepath.FromSlash(f.Path))
-			_, statErr := os.Stat(p)
-			out = append(out, ArtifactEntry{
-				RunID: id, Kind: "file", Name: filepath.Base(f.Path), Path: f.Path,
-				SHA256: f.SHA256, Size: f.Size, Local: statErr == nil,
-			})
+		if all {
+			for _, f := range m.Files {
+				p := filepath.Join(runDir, filepath.FromSlash(f.Path))
+				_, statErr := os.Stat(p)
+				out = append(out, ArtifactEntry{
+					RunID: id, Kind: "runfile", Name: filepath.Base(f.Path), Path: f.Path,
+					SHA256: f.SHA256, Size: f.Size, Local: statErr == nil,
+				})
+			}
 		}
 		for _, a := range m.Artifacts {
 			out = append(out, ArtifactEntry{
