@@ -13,8 +13,9 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import subprocess
-import time
+from datetime import datetime
 
 
 def sha256_file(path):
@@ -30,7 +31,7 @@ def sha256_text(text):
 
 
 def now():
-    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def run_command(command, cwd=None, env=None):
@@ -151,6 +152,9 @@ def main():
                 "uri": "remote://%s/%s" % (run_id, name),
                 "sha256": sha256_file(path),
                 "size": os.path.getsize(path),
+                "verified": True,
+                "verified_at": now(),
+                "host": socket.gethostname(),
             })
 
     files = []

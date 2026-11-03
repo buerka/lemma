@@ -615,7 +615,7 @@ lemma/                        # this tool
 | `lem status` | 重新生成 `STATE.md` | 快照 |
 | `lem next` | 返回下一个可执行任务 | task JSON |
 | `lem artifact list` | 列出本地 manifest 中的文件与远端 artifact | 路径、URI、SHA-256 |
-| `lem artifact verify` | 校验本地 manifest 文件哈希 | exit code + report |
+| `lem artifact verify` | 校验本地 manifest；区分 remote-verified/remote-unverified | exit code + report / `--strict` |
 | `lem artifact fetch` | v0.1 未实现，返回 `NOT_IMPLEMENTED` | — |
 | `lem migrate` | 检查 schema 版本（v0.1 没有迁移） | 版本 |
 
@@ -668,7 +668,14 @@ lemma/                        # this tool
   "environment_hash": "sha256:...",
   "metrics": {"macro_f2": 0.89},
   "artifacts": [
-    {"name": "checkpoint", "uri": "ssh://gpu/~/.lem-runs/.../checkpoint.pt", "sha256": "..."}
+    {
+      "name": "checkpoint",
+      "uri": "ssh://gpu/~/.lem-runs/.../checkpoint.pt",
+      "sha256": "...",
+      "verified": true,
+      "verified_at": "2026-11-02T22:40:00+08:00",
+      "host": "gpu"
+    }
   ]
 }
 ```
@@ -936,9 +943,13 @@ predictions/
 
 - 数据集只保留一份 canonical copy；首次 `sha256sum` 后写进 `project.yaml`。
 - 每次 run 只校验数据集哈希，不复制。
-- checkpoint、日志、预测不拉回本地；`lem artifact fetch` 在 v0.1 尚未实现。
-- artifact 用 `URI + SHA-256` 引用，不用本地绝对路径；`lem artifact list/verify`
-  只校验本地 manifest，远端对象显示为 `remote`。
+- checkpoint、日志、预测不拉回本地；`lem artifact fetch` 在 v0.2 尚未实现。
+- artifact 用 `URI + SHA-256` 引用，不用本地绝对路径。
+- runner 对声明 outputs 计算 SHA-256，并写入 `verified: true`、`verified_at`、`host`。
+- `lem artifact verify` 对本地 manifest 文件重算哈希；远端 artifact 分为
+  `remote-verified`（runner 记录过验证）和 `remote-unverified`（未记录）。
+  默认 `remote-unverified` 是 warning；`--strict` 把它当作失败。
+  没有 runner 验证记录时不会声称 verified。
 - `lem gc` 尚未实现。
 
 ---
@@ -959,8 +970,10 @@ predictions/
 | `metrics` | `metrics.json` |
 | `artifacts` | URI + SHA-256 |
 
-`lem artifact verify` 检查本地 manifest 的文件是否缺失、SHA-256 是否匹配；
-`lem verify` 负责 schema、事件链、gate、receipt 和 git 状态。
+`lem artifact verify` 检查本地 manifest 的文件是否缺失、SHA-256 是否匹配，
+并把远端 artifact 区分为 `remote-verified` / `remote-unverified`；`--strict`
+使未验证的远端 artifact 失败。`lem verify` 负责 schema、事件链、gate、receipt
+和 git 状态。
 
 ---
 

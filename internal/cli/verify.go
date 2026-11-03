@@ -106,7 +106,8 @@ func cmdArtifactList(c *Context, args []string) error {
 func cmdArtifactVerify(c *Context, args []string) error {
 	fs := flag.NewFlagSet("artifact verify", flag.ContinueOnError)
 	runID := fs.String("run", "", "run id")
-	ok, err := parseFlags(c, fs, args, "Usage: lem artifact verify [run_id] [--run ID]\n")
+	strict := fs.Bool("strict", false, "fail on remote-unverified artifacts")
+	ok, err := parseFlags(c, fs, args, "Usage: lem artifact verify [run_id] [--run ID] [--strict]\n")
 	if !ok {
 		return err
 	}
@@ -119,7 +120,7 @@ func cmdArtifactVerify(c *Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	report, err := core.VerifyArtifacts(l, *runID, c.Globals.LockTimeout)
+	report, err := core.VerifyArtifacts(l, *runID, *strict, c.Globals.LockTimeout)
 	if err != nil {
 		return err
 	}
@@ -130,19 +131,16 @@ func cmdArtifactVerify(c *Context, args []string) error {
 		return c.jsonOut(report)
 	}
 	for _, chk := range report.Checks {
-		if chk.Status == "remote" {
-			continue
-		}
 		fmt.Fprintf(c.Out, "%s  %s  %s\n", chk.Status, chk.RunID, chk.Path)
 		if chk.Detail != "" && chk.Status != "ok" {
 			fmt.Fprintf(c.Out, "      %s\n", chk.Detail)
 		}
 	}
 	if report.OK {
-		fmt.Fprintf(c.Out, "OK: %d check(s), %d failed\n", report.Checked, report.Failed)
+		fmt.Fprintf(c.Out, "OK: %d check(s), %d failed, %d warning(s)\n", report.Checked, report.Failed, report.Warnings)
 		return nil
 	}
-	fmt.Fprintf(c.Err, "artifact verify failed: %d of %d check(s) failed\n", report.Failed, report.Checked)
+	fmt.Fprintf(c.Err, "artifact verify failed: %d of %d check(s) failed, %d warning(s)\n", report.Failed, report.Checked, report.Warnings)
 	c.ExitCode = 1
 	return nil
 }

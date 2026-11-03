@@ -12,31 +12,38 @@ import (
 )
 
 type ArtifactEntry struct {
-	RunID  string `json:"run_id"`
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Path   string `json:"path,omitempty"`
-	URI    string `json:"uri,omitempty"`
-	SHA256 string `json:"sha256,omitempty"`
-	Size   int64  `json:"size,omitempty"`
-	Local  bool   `json:"local"`
+	RunID      string `json:"run_id"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Path       string `json:"path,omitempty"`
+	URI        string `json:"uri,omitempty"`
+	SHA256     string `json:"sha256,omitempty"`
+	Size       int64  `json:"size,omitempty"`
+	Local      bool   `json:"local"`
+	Verified   bool   `json:"verified,omitempty"`
+	VerifiedAt string `json:"verified_at,omitempty"`
+	Host       string `json:"host,omitempty"`
 }
 
 type ArtifactCheck struct {
-	RunID  string `json:"run_id"`
-	Kind   string `json:"kind"`
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256,omitempty"`
-	Status string `json:"status"` // ok | missing | mismatch | remote | unreadable
-	Detail string `json:"detail,omitempty"`
+	RunID      string `json:"run_id"`
+	Kind       string `json:"kind"`
+	Path       string `json:"path"`
+	SHA256     string `json:"sha256,omitempty"`
+	Status     string `json:"status"` // ok | missing | mismatch | remote-verified | remote-unverified | unreadable
+	Detail     string `json:"detail,omitempty"`
+	VerifiedAt string `json:"verified_at,omitempty"`
+	Host       string `json:"host,omitempty"`
 }
 
 type ArtifactReport struct {
-	OK      bool            `json:"ok"`
-	RunID   string          `json:"run_id,omitempty"`
-	Checks  []ArtifactCheck `json:"checks"`
-	Checked int             `json:"checked"`
-	Failed  int             `json:"failed"`
+	OK       bool            `json:"ok"`
+	RunID    string          `json:"run_id,omitempty"`
+	Strict   bool            `json:"strict"`
+	Checks   []ArtifactCheck `json:"checks"`
+	Checked  int             `json:"checked"`
+	Failed   int             `json:"failed"`
+	Warnings int             `json:"warnings"`
 }
 
 func artifactRunIDs(l *Ledger, runID string) ([]string, error) {
@@ -80,7 +87,8 @@ func ListArtifacts(l *Ledger, runID string) ([]ArtifactEntry, error) {
 		for _, a := range m.Artifacts {
 			out = append(out, ArtifactEntry{
 				RunID: id, Kind: "artifact", Name: a.Name, URI: a.URI,
-				SHA256: a.SHA256, Size: a.Size,
+				SHA256: a.SHA256, Size: a.Size, Verified: a.Verified,
+				VerifiedAt: a.VerifiedAt, Host: a.Host,
 			})
 		}
 	}
@@ -97,8 +105,10 @@ func ListArtifacts(l *Ledger, runID string) ([]ArtifactEntry, error) {
 }
 
 // VerifyArtifacts checks local manifest files against their recorded hashes.
-// Remote artifacts are reported as remote and are not treated as failures.
-func VerifyArtifacts(l *Ledger, runID string, lockTimeout time.Duration) (*ArtifactReport, error) {
+// Remote artifacts are reported as remote-verified only when the runner
+// recorded a verified hash; remote-unverified is a warning by default and a
+// failure in strict mode.
+func VerifyArtifacts(l *Ledger, runID string, strict bool, lockTimeout time.Duration) (*ArtifactReport, error) {
 	lock, err := AcquireLock(l.Dir, lockTimeout)
 	if err != nil {
 		return nil, err
@@ -109,7 +119,7 @@ func VerifyArtifacts(l *Ledger, runID string, lockTimeout time.Duration) (*Artif
 	if err != nil {
 		return nil, err
 	}
-	report := &ArtifactReport{OK: true, RunID: runID, Checks: []ArtifactCheck{}}
+	report := &ArtifactReport{OK: true, RunID: runID, Strict: strict, Checks: []ArtifactCheck{}}
 	for _, id := range ids {
 		m, err := LoadManifest(l, id)
 		if err != nil {
@@ -137,7 +147,10 @@ func VerifyArtifacts(l *Ledger, runID string, lockTimeout time.Duration) (*Artif
 			report.Checks = append(report.Checks, check)
 		}
 		for _, a := range m.Artifacts {
-			check := ArtifactCheck{RunID: id, Kind: "artifact", Path: a.URI, SHA256: a.SHA256}
+			check := ArtifactCheck{
+				RunID: id, Kind: "artifact", Path: a.URI, SHA256: a.SHA256,
+				VerifiedAt: a.VerifiedAt, Host: a.Host,
+			}
 			if strings.HasPrefix(a.URI, "file://") {
 				p := strings.TrimPrefix(a.URI, "file://")
 				b, err := os.ReadFile(p)
@@ -147,13 +160,22 @@ func VerifyArtifacts(l *Ledger, runID string, lockTimeout time.Duration) (*Artif
 					report.Failed++
 				} else if a.SHA256 != "" && HashFileBytes(b) != a.SHA256 {
 					check.Status = "mismatch"
+					check.Detail = "local artifact hash does not match"
 					report.Failed++
 				} else {
 					check.Status = "ok"
 				}
+			} else if a.Verified && a.SHA256 != "" {
+				check.Status = "remote-verified"
+				check.Detail = "verified by runner at " + a.VerifiedAt + " on " + a.Host
 			} else {
-				check.Status = "remote"
-				check.Detail = "remote artifact; local SHA-256 verification not possible"
+				check.Status = "remote-unverified"
+				check.Detail = "runner did not record a verified SHA-256; use --strict to fail"
+				if strict {
+					report.Failed++
+				} else {
+					report.Warnings++
+				}
 			}
 			report.Checked++
 			report.Checks = append(report.Checks, check)

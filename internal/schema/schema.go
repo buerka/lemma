@@ -343,10 +343,13 @@ func (r RunSpec) Validate() error {
 
 // Artifact is a remote object referenced by URI + SHA-256.
 type Artifact struct {
-	Name   string `json:"name"`
-	URI    string `json:"uri"`
-	SHA256 string `json:"sha256,omitempty"`
-	Size   int64  `json:"size,omitempty"`
+	Name       string `json:"name"`
+	URI        string `json:"uri"`
+	SHA256     string `json:"sha256,omitempty"`
+	Size       int64  `json:"size,omitempty"`
+	Verified   bool   `json:"verified,omitempty"`
+	VerifiedAt string `json:"verified_at,omitempty"`
+	Host       string `json:"host,omitempty"`
 }
 
 // RemoteResult is the JSON returned by a runner subagent.
@@ -388,6 +391,9 @@ func (r RemoteResult) Validate() error {
 		}
 		if a.URI == "" && a.SHA256 == "" {
 			return fmt.Errorf("artifact %s: uri or sha256 is required", a.Name)
+		}
+		if a.Verified && !ValidHash(a.SHA256) {
+			return fmt.Errorf("artifact %s: verified artifact requires a sha256 hash", a.Name)
 		}
 	}
 	if r.EnvironmentHash != "" && !ValidHash(r.EnvironmentHash) {

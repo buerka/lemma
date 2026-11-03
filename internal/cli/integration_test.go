@@ -1193,9 +1193,11 @@ func TestRunnerRecordsRemoteFingerprint(t *testing.T) {
 		t.Fatalf("init: %d %s %s", code, out, errOut)
 	}
 	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
-	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1", "--command", "true")
 	runID := "T1.default.default.seed0"
 	runDir := filepath.Join(root, "progress", "runs", runID)
+	metricsPath := filepath.Join(runDir, "metrics.json")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--command", "touch "+metricsPath, "--output", "metrics.json")
 	cmd := exec.Command(python, filepath.Join(runDir, "runner.py"), "--spec", filepath.Join(runDir, "run_spec.json"))
 	cmd.Dir = runDir
 	output, err := cmd.CombinedOutput()
@@ -1223,10 +1225,80 @@ func TestRunnerRecordsRemoteFingerprint(t *testing.T) {
 	if !schema.ValidHash(remote.EnvironmentHash) {
 		t.Fatalf("runner environment_hash = %q", remote.EnvironmentHash)
 	}
+	if len(remote.Artifacts) != 1 || !remote.Artifacts[0].Verified {
+		t.Fatalf("runner did not mark declared output verified: %+v", remote.Artifacts)
+	}
+	if remote.Artifacts[0].SHA256 == "" || remote.Artifacts[0].VerifiedAt == "" || remote.Artifacts[0].Host == "" {
+		t.Fatalf("runner verification metadata incomplete: %+v", remote.Artifacts[0])
+	}
 	mustRun(t, "--json", "--project", root, "run", "finish", runID,
 		"--result", filepath.Join(runDir, "remote_result.json"))
+	artifactReport := decodeJSON[core.ArtifactReport](t, mustRun(t, "--json", "--project", root,
+		"artifact", "verify", "--strict"))
+	if !artifactReport.OK {
+		t.Fatalf("strict artifact verify after runner: %+v", artifactReport.Checks)
+	}
 	human := mustRun(t, "--project", root, "run", "status", runID)
 	if !strings.Contains(human, wantCommit) {
 		t.Fatalf("run status does not show remote commit:\n%s", human)
+	}
+}
+
+func TestArtifactRemoteVerificationAndStrict(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := newProjectRoot(t, "artifact-remote")
+	initDemo(t, root, "artifact-remote")
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1", "--command", "true")
+	runID := "T1.default.default.seed0"
+	runDir := filepath.Join(root, "progress", "runs", runID)
+	remote := map[string]any{
+		"run_id": runID, "status": "succeeded", "exit_code": 0,
+		"artifacts": []map[string]any{
+			{
+				"name": "checkpoint", "uri": "remote://" + runID + "/checkpoint.pt",
+				"sha256":   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"verified": true, "verified_at": "2026-11-03T01:00:00+08:00", "host": "gpu-node",
+			},
+			{
+				"name": "predictions", "uri": "remote://" + runID + "/predictions.npy",
+				"sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			},
+		},
+	}
+	raw, _ := json.Marshal(remote)
+	if err := os.WriteFile(filepath.Join(runDir, "remote_result.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, "--json", "--project", root, "run", "finish", runID,
+		"--result", filepath.Join(runDir, "remote_result.json"))
+
+	report := decodeJSON[core.ArtifactReport](t, mustRun(t, "--json", "--project", root, "artifact", "verify"))
+	if !report.OK || report.Warnings != 1 || report.Strict {
+		t.Fatalf("default artifact report: %+v", report)
+	}
+	statuses := map[string]string{}
+	for _, chk := range report.Checks {
+		statuses[chk.Path] = chk.Status
+	}
+	if statuses["remote://"+runID+"/checkpoint.pt"] != "remote-verified" {
+		t.Fatalf("verified remote artifact status = %q", statuses["remote://"+runID+"/checkpoint.pt"])
+	}
+	if statuses["remote://"+runID+"/predictions.npy"] != "remote-unverified" {
+		t.Fatalf("unverified remote artifact status = %q", statuses["remote://"+runID+"/predictions.npy"])
+	}
+	human := mustRun(t, "--project", root, "artifact", "verify")
+	if !strings.Contains(human, "remote-verified") || !strings.Contains(human, "remote-unverified") {
+		t.Fatalf("artifact verify human output lacks remote statuses:\n%s", human)
+	}
+
+	code, out, _ := runCLI("--json", "--project", root, "artifact", "verify", "--strict")
+	if code != 1 {
+		t.Fatalf("strict artifact verify exit = %d, want 1\n%s", code, out)
+	}
+	strictReport := decodeJSON[core.ArtifactReport](t, out)
+	if strictReport.OK || !strictReport.Strict || strictReport.Failed != 1 {
+		t.Fatalf("strict artifact report: %+v", strictReport)
 	}
 }
