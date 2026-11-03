@@ -191,14 +191,17 @@ func cmdApply(c *Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if res.AlreadyApplied {
-		c.ExitCode = 5
-	}
 	if c.Globals.JSON {
+		if res.AlreadyApplied {
+			c.ExitCode = 5
+		}
 		return c.jsonOut(res)
 	}
 	if res.AlreadyApplied {
-		fmt.Fprintf(c.Err, "lem: changeset %s was already applied\n", res.Receipt.ChangesetID)
+		c.ExitCode = 5
+		fmt.Fprintf(c.Out, "already applied %s; receipt: %s\n",
+			res.Receipt.ChangesetID, l.Rel(l.ReceiptPath(res.Receipt.ChangesetID)))
+		return nil
 	}
 	fmt.Fprintf(c.Out, "applied %s\n", res.Receipt.ChangesetID)
 	fmt.Fprintf(c.Out, "  changeset hash: %s\n", res.Receipt.ChangesetHash)

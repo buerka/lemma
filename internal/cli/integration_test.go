@@ -206,6 +206,13 @@ func TestEndToEndLedgerFlow(t *testing.T) {
 	if !dup.AlreadyApplied {
 		t.Fatal("duplicate apply did not return the existing receipt")
 	}
+	code, duplicateHuman, _ := runCLI("--project", root, "apply", csPath)
+	if code != 5 {
+		t.Fatalf("duplicate human apply exit = %d, want 5", code)
+	}
+	if strings.Count(duplicateHuman, "applied") != 1 || !strings.Contains(duplicateHuman, "receipt:") {
+		t.Fatalf("duplicate apply output is not a single line:\n%s", duplicateHuman)
+	}
 
 	verify := decodeJSON[core.VerifyReport](t, mustRun(t, "--json", "--project", root, "verify"))
 	if !verify.OK {
