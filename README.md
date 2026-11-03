@@ -34,7 +34,7 @@
 
 - `progress/` 只存 manifest、事件、变更单和摘要，不存大文件；
 - 每次状态变更都经过 `plan → approve → apply`，人类批准的是一个哈希；
-- 每个 run 记录 `code_commit + config_hash + data_hash + environment_hash`；
+- 每个 run 记录 `code_commit + config_hash + data_sha256 + environment_hash`；
 - 大文件（checkpoint、日志、预测）留在远端，按 URI + SHA-256 引用。
 
 ---
@@ -214,9 +214,9 @@ release lock
 `flock` 在本地文件系统可靠；NFS/SMB 的锁语义不一致。跨机器写同一个 ledger 时：
 
 - 限制同一项目只有一个写者，其他机器只读；
-- 或者后续加一个轻量 HTTP 写服务（不是 v0.1 范围）。
+- 或者后续加一个轻量 HTTP 写服务（不是 v0.2 范围）。
 
-当前 v0.1 假设：**同一台机器、普通 CLI 进程、每项目一个 ledger**。
+当前 v0.2 假设：**同一台机器、普通 CLI 进程、每项目一个 ledger**。
 
 ### Testing
 
@@ -507,6 +507,7 @@ lem approve progress/changesets/cs-....json --by human \
 - token 文件默认是 `~/.config/lem/approval-token`；`$LEM_CONFIG_DIR` 或
   `$XDG_CONFIG_HOME/lem` 可覆盖，文件必须是 0600（不能有 group/world 权限）。
 - token 模式记录 `approval_method: "token"`。
+- `--token` 会出现在进程参数中；能使用 TTY 时优先用 TTY。
 - 旧 gate 没有 `approval_method` 时按 `legacy` 处理，`verify` 仍然接受。
 - 这是**流程约束，不是密码学证明**：能写 `gates.jsonl` 的人仍然可以伪造记录。
   它只阻止非交互 agent 随手自批。
@@ -1059,8 +1060,8 @@ lem apply progress/changesets/cs-20261102-002.json
 - Release command:
 
   ```bash
-  git tag -a v0.1.0 -m "Lemma v0.1.0"
-  git push origin v0.1.0
+  git tag -a v0.2.0 -m "Lemma v0.2.0"
+  git push origin v0.2.0
   ```
 
 ### Implementation status and known limits

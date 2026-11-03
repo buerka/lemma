@@ -32,6 +32,8 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - name: Check runner.py syntax
+        run: python3 -c 'compile(open("templates/runner.py.tmpl").read(), "runner.py.tmpl", "exec")'
       - name: Vet
         run: go vet ./...
       - name: Test
