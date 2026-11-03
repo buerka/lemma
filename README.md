@@ -392,6 +392,16 @@ storage:
   artifact_root: ssh://gpu/~/.lem-runs
 ```
 
+**Root vs workdir contract**
+
+- `root`（`progress/` 的父目录）是**账本/项目元数据根**：`project.yaml`、
+  `tasks.yaml`、`events.jsonl`、changesets、receipts 都在这里。
+- `remote.workdir` 是**代码仓库根**，也是 runner 执行命令时的 cwd。
+- `run start` 的 `codeInfo` 优先用 `remote.workdir` 找 git 仓库；找不到才回退 `root`。
+- `--config` / `--data` 的相对路径先按 `remote.workdir` 解析，再回退 `root`；
+  两处都找不到时，错误信息会同时列出尝试过的路径。
+- 如果代码和账本在同一个目录，可把 `remote.workdir` 设为 `root` 或留空。
+
 ### Verify the setup
 
 ```bash
@@ -892,10 +902,10 @@ predictions/
 
 | Field | How |
 |---|---|
-| `code_commit` | `git -C <workdir> rev-parse HEAD` |
-| `code_patch_hash` | `git -C <workdir> diff \| sha256sum`（dirty 时） |
-| `config_hash` | canonical JSON/YAML hash |
-| `data_sha256` | `sha256sum <data_path>` |
+| `code_commit` | `git -C <remote.workdir or root> rev-parse HEAD`（远端 runner 会重新记录） |
+| `code_patch_hash` | 本地/远端 `git diff` + `git status` 的 SHA-256（dirty 时） |
+| `config_hash` | canonical JSON 或配置文件字节的 SHA-256 |
+| `data_sha256` | 本地 `sha256sum <data_path>`；远端 URI 由 `--data-sha256` 提供 |
 | `split_hash` | split manifest hash |
 | `environment_hash` | `pip freeze` + `nvidia-smi` hash |
 | `seed` | run spec |

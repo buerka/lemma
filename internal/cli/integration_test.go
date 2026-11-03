@@ -823,3 +823,119 @@ func mustReadFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+func newGitWorkdir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# workdir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "init")
+	return dir
+}
+
+func TestRemoteWorkdirContract(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := t.TempDir()
+	workdir := newGitWorkdir(t)
+	code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "workdir-demo",
+		"--host", "local", "--workdir", workdir, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+
+	configBytes := []byte("seed: 0\n")
+	dataBytes := []byte("dataset")
+	if err := os.MkdirAll(filepath.Join(workdir, "configs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workdir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "configs", "train.yaml"), configBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "data", "input.bin"), dataBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, workdir, "add", "configs", "data")
+	runGit(t, workdir, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "inputs")
+
+	start := decodeJSON[core.StartRunResult](t, mustRun(t, "--json", "--project", root,
+		"run", "start", "--task", "T1", "--method", "baseline", "--split", "random", "--seed", "0",
+		"--command", "true", "--config", "configs/train.yaml", "--data", "data/input.bin"))
+	spec := start.Spec
+	if spec.Code.Commit == "" || spec.Code.Repo == "" {
+		t.Fatalf("code info did not come from remote.workdir: %+v", spec.Code)
+	}
+	if spec.Code.Dirty {
+		t.Fatalf("clean workdir reported dirty: %+v", spec.Code)
+	}
+	if spec.ConfigHash != core.HashFileBytes(configBytes) {
+		t.Fatalf("config hash = %s, want %s", spec.ConfigHash, core.HashFileBytes(configBytes))
+	}
+	if spec.Data == nil || spec.Data.SHA256 != core.HashFileBytes(dataBytes) {
+		t.Fatalf("data hash not resolved from workdir: %+v", spec.Data)
+	}
+	if spec.ConfigPath != "configs/train.yaml" || spec.Data.Path != "data/input.bin" {
+		t.Fatalf("unexpected spec input paths: config=%q data=%+v", spec.ConfigPath, spec.Data)
+	}
+
+	code, _, errOut = runCLI("--project", root, "run", "start", "--task", "T1",
+		"--run-id", "missing-config", "--config", "nope.yaml")
+	if code != 1 {
+		t.Fatalf("missing config exit = %d, want 1 (%s)", code, errOut)
+	}
+	if !strings.Contains(errOut, workdir) || !strings.Contains(errOut, root) {
+		t.Fatalf("missing config error does not list both roots: %s", errOut)
+	}
+	code, _, errOut = runCLI("--project", root, "run", "start", "--task", "T1",
+		"--run-id", "missing-data", "--data", "nope.bin")
+	if code != 1 {
+		t.Fatalf("missing data exit = %d, want 1 (%s)", code, errOut)
+	}
+	if !strings.Contains(errOut, workdir) || !strings.Contains(errOut, root) {
+		t.Fatalf("missing data error does not list both roots: %s", errOut)
+	}
+}
+
+func TestSymlinkRootCleanRepoNotDirty(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	actual := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(actual); err == nil {
+		actual = resolved
+	}
+	if err := os.WriteFile(filepath.Join(actual, "README.md"), []byte("# repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, actual, "init", "-b", "main")
+	runGit(t, actual, "add", ".")
+	runGit(t, actual, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "init")
+	link := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(actual, link); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := runCLI("--json", "init", "--root", link, "--project", "symlink",
+		"--host", "local", "--workdir", link, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", link, "task", "add", "--id", "T1", "--title", "task")
+	start := decodeJSON[core.StartRunResult](t, mustRun(t, "--json", "--project", link,
+		"run", "start", "--task", "T1", "--command", "true"))
+	if start.Spec.Code.Commit == "" {
+		t.Fatalf("missing code commit: %+v", start.Spec.Code)
+	}
+	if start.Spec.Code.Dirty {
+		t.Fatalf("symlinked clean repo reported dirty: %+v", start.Spec.Code)
+	}
+}

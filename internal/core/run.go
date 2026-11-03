@@ -409,7 +409,7 @@ func FinishRun(l *Ledger, runID string, opts FinishRunOptions) (*FinishRunResult
 }
 
 func (l *Ledger) codeInfo() schema.CodeInfo {
-	repo := GitTopLevel(l.Root)
+	repo := l.codeRoot()
 	if repo == "" {
 		return schema.CodeInfo{}
 	}
@@ -424,12 +424,57 @@ func (l *Ledger) codeInfo() schema.CodeInfo {
 	return schema.CodeInfo{Repo: repo, Commit: commit, PatchHash: HashFileBytes([]byte(patch)), Dirty: true}
 }
 
+// codeRoot returns the git repository used to record run reproducibility.
+// remote.workdir is the code repository root; root is only a fallback for
+// projects that keep code and ledger in the same directory.
+func (l *Ledger) codeRoot() string {
+	if wd := l.resolvedWorkdir(); wd != "" {
+		if repo := GitTopLevel(wd); repo != "" {
+			return repo
+		}
+	}
+	return GitTopLevel(l.Root)
+}
+
+func (l *Ledger) resolvedWorkdir() string {
+	wd := strings.TrimSpace(l.Project.Remote.Workdir)
+	if wd == "" {
+		return ""
+	}
+	wd = expandHome(wd)
+	if !filepath.IsAbs(wd) {
+		wd = filepath.Join(l.Root, wd)
+	}
+	return filepath.Clean(wd)
+}
+
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			if p == "~" {
+				return home
+			}
+			return filepath.Join(home, strings.TrimPrefix(p, "~/"))
+		}
+	}
+	return p
+}
+
 func gitStatusExcluding(g Git, ledgerDir string) string {
 	out, err := g.run("status", "--porcelain", "--untracked-files=all")
 	if err != nil {
 		return ""
 	}
-	rel, err := filepath.Rel(g.Dir, ledgerDir)
+	repoDir := g.Dir
+	if resolved, err := filepath.EvalSymlinks(repoDir); err == nil {
+		repoDir = resolved
+	}
+	ledger := ledgerDir
+	if resolved, err := filepath.EvalSymlinks(ledger); err == nil {
+		ledger = resolved
+	}
+	rel, err := filepath.Rel(repoDir, ledger)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return out
 	}
@@ -457,10 +502,13 @@ func gitStatusExcluding(g Git, ledgerDir string) string {
 
 func (l *Ledger) configInfo(opts StartRunOptions) (string, []schema.InputRef, string, error) {
 	if opts.Config != "" {
-		p := ResolvePath(l.Root, opts.Config)
+		p, err := l.resolveInputPath("config file", opts.Config)
+		if err != nil {
+			return "", nil, "", err
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
-			return "", nil, "", Errorf(CodeNotFound, "config file not found: %s", p)
+			return "", nil, "", Wrap(CodeGeneral, "read config file", err)
 		}
 		return HashFileBytes(b), []schema.InputRef{{Path: opts.Config, SHA256: HashFileBytes(b)}}, opts.Config, nil
 	}
@@ -488,16 +536,51 @@ func (l *Ledger) dataInfo(opts StartRunOptions) (*schema.DataRef, *schema.InputR
 			return nil, nil, Errorf(CodeUsage, "remote data requires --data-sha256")
 		}
 	} else {
-		p := ResolvePath(l.Root, opts.Data)
+		p, err := l.resolveInputPath("data file", opts.Data)
+		if err != nil {
+			return nil, nil, err
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
-			return nil, nil, Errorf(CodeNotFound, "data file not found: %s (use a URI plus --data-sha256 for remote data)", p)
+			return nil, nil, Wrap(CodeGeneral, "read data file", err)
 		}
 		ref.Path = opts.Data
 		ref.SHA256 = HashFileBytes(b)
 	}
 	in := &schema.InputRef{Path: opts.Data, SHA256: ref.SHA256}
 	return ref, in, nil
+}
+
+// resolveInputPath resolves a local config/data path. Relative paths are looked
+// up under remote.workdir (the code repository root and runner cwd) first, then
+// under the project root (the ledger/metadata root). Errors list every path
+// that was tried.
+func (l *Ledger) resolveInputPath(kind, p string) (string, error) {
+	if filepath.IsAbs(p) {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return filepath.Clean(p), nil
+		}
+		return "", Errorf(CodeNotFound, "%s not found: %s", kind, p)
+	}
+	var candidates []string
+	if wd := l.resolvedWorkdir(); wd != "" {
+		candidates = append(candidates, filepath.Join(wd, p))
+	}
+	candidates = append(candidates, filepath.Join(l.Root, p))
+	seen := map[string]bool{}
+	var tried []string
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		if seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		tried = append(tried, candidate)
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", Errorf(CodeNotFound, "%s not found; tried %s (set remote.workdir for the code repo or use an absolute path)", kind, strings.Join(tried, " and "))
 }
 
 func dataSHA(d *schema.DataRef) string {
