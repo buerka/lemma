@@ -2,7 +2,7 @@
 
 > A minimal, git-native progress ledger for human–agent research projects, with remote execution through [ssh-mcp](https://github.com/buerka/ssh-mcp).
 
-**Name:** Lemma · **Command:** `lem` (alias: `lemma`) · **Status:** v0.1 implemented · **Go:** 1.22+ · **License:** MIT
+**Name:** Lemma · **Command:** `lem` (alias: `lemma`) · **Status:** v0.2 implemented · **Go:** 1.22+ · **License:** MIT
 
 [![ci](https://github.com/buerka/lemma/actions/workflows/ci.yml/badge.svg)](https://github.com/buerka/lemma/actions/workflows/ci.yml)
 [![release](https://github.com/buerka/lemma/actions/workflows/release.yml/badge.svg)](https://github.com/buerka/lemma/actions/workflows/release.yml)
@@ -614,10 +614,10 @@ lemma/                        # this tool
 | `lem verify` | 校验哈希链、schema、git 状态 | exit code + report |
 | `lem status` | 重新生成 `STATE.md` | 快照 |
 | `lem next` | 返回下一个可执行任务 | task JSON |
-| `lem artifact list` | 列出本地 manifest 中的文件与远端 artifact | 路径、URI、SHA-256 |
+| `lem artifact list` | 列出声明的 outputs（`--all` 显示 runfiles） | 路径、URI、SHA-256、verified |
 | `lem artifact verify` | 校验本地 manifest；区分 remote-verified/remote-unverified | exit code + report / `--strict` |
-| `lem artifact fetch` | v0.1 未实现，返回 `NOT_IMPLEMENTED` | — |
-| `lem migrate` | 检查 schema 版本（v0.1 没有迁移） | 版本 |
+| `lem artifact fetch` | 尚未实现，返回 `NOT_IMPLEMENTED` | — |
+| `lem migrate` | 检查 schema 版本（v0.2 没有迁移） | 版本 |
 
 所有命令支持 `--json` 和全局 `--project`；人类默认看到 Markdown。
 `--json` 时成功结果写 stdout，错误对象也写 stdout；人类错误写 stderr。
@@ -887,16 +887,17 @@ Local spec: progress/runs/<run_id>/run_spec.json
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUN_ID="$1"
-REMOTE_ROOT="${LEM_REMOTE_ROOT:-$HOME/.lem-runs}"
-WORKDIR="${LEM_WORKDIR:-$HOME/project}"
+RUN_ID="${1:?usage: runner.sh <run_id>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_DIR="${LEM_RUN_DIR:-$SCRIPT_DIR}"
 PYTHON="${LEM_PYTHON:-python3}"
-RUN_DIR="$REMOTE_ROOT/$RUN_ID"
 
-cd "$WORKDIR"
-"$PYTHON" runner.py --spec "$RUN_DIR/run_spec.json" \
+mkdir -p "$RUN_DIR"
+"$PYTHON" "$RUN_DIR/runner.py" --spec "$RUN_DIR/run_spec.json" \
   > "$RUN_DIR/stdout.log" 2>&1
-echo $? > "$RUN_DIR/exit_code"
+code=$?
+echo "$code" > "$RUN_DIR/exit_code"
+exit "$code"
 ```
 
 `runner.py` 读 `run_spec.json`，校验输入哈希，执行 `command`，在
@@ -946,6 +947,8 @@ predictions/
 - checkpoint、日志、预测不拉回本地；`lem artifact fetch` 在 v0.2 尚未实现。
 - artifact 用 `URI + SHA-256` 引用，不用本地绝对路径。
 - runner 对声明 outputs 计算 SHA-256，并写入 `verified: true`、`verified_at`、`host`。
+- `lem artifact list` 默认只列出声明的 outputs；`--all` 额外显示
+  `run_spec.json`、`REMOTE_TASK.md`、`runner.*` 等 runfile。
 - `lem artifact verify` 对本地 manifest 文件重算哈希；远端 artifact 分为
   `remote-verified`（runner 记录过验证）和 `remote-unverified`（未记录）。
   默认 `remote-unverified` 是 warning；`--strict` 把它当作失败。
@@ -964,11 +967,13 @@ predictions/
 | `code_patch_hash` | 本地/远端 `git diff` + `git status` 的 SHA-256（dirty 时） |
 | `config_hash` | canonical JSON 或配置文件字节的 SHA-256 |
 | `data_sha256` | 本地 `sha256sum <data_path>`；远端 URI 由 `--data-sha256` 提供 |
-| `split_hash` | split manifest hash |
 | `environment_hash` | 远端 Python 版本、`pip freeze`、`nvidia-smi` 的 canonical JSON SHA-256 |
 | `seed` | run spec |
 | `metrics` | `metrics.json` |
-| `artifacts` | URI + SHA-256 |
+| `artifacts` | URI + SHA-256；runner 验证的远端产物带 `verified`/`verified_at`/`host` |
+
+v0.2 不记录 `split_hash`：split manifest 尚未纳入工具契约。需要时在 RA 侧
+记录并在 `--evidence` 中引用。
 
 `lem artifact verify` 检查本地 manifest 的文件是否缺失、SHA-256 是否匹配，
 并把远端 artifact 区分为 `remote-verified` / `remote-unverified`；`--strict`
@@ -1060,7 +1065,7 @@ lem apply progress/changesets/cs-20261102-002.json
 
 ### Implementation status and known limits
 
-Implemented in v0.1:
+Implemented in v0.2:
 
 - `init`, `doctor`, `task add/update/list`, `run start/finish/status`,
   `status`, `next`, `plan`, `review`, `approve`, `apply`, `log`, `show`,
@@ -1070,13 +1075,18 @@ Implemented in v0.1:
   `progress/` git repo, atomic writes, and `BUSY/CONFLICT/IDEMPOTENT/STALE`
   semantics.
 - Local run manifests and artifact listing/verification.
+- `remote.workdir` as the code/config/data contract root.
+- TTY/token approval gates with `approval_method`.
+- Remote `code` / `environment` / `environment_hash` recorded by the runner.
+- `remote-verified` / `remote-unverified` artifacts and `artifact verify --strict`.
 
-Not implemented in v0.1:
+Not implemented in v0.2:
 
 - `artifact fetch`, `gc`, MCP server, direct SSH, dashboard/TUI, DVC/MLflow,
   remote GC, multi-user permissions, automatic scientific judgment.
 - `lem migrate` only reports the schema version; there are no older schemas to
   migrate from yet.
+- split manifests / `split_hash` are not part of the v0.2 contract.
 - `apply` commits the receipt in a second commit after the state/event commit.
   This keeps the ledger clean and the receipt auditable without rewriting
   history.
@@ -1095,11 +1105,11 @@ Not implemented in v0.1:
 
 ## Roadmap
 
-- **v0.1 (this repo)**：Go core + CLI + 单/多项目 + 锁/revision + 哈希链 +
+- **v0.2 (this repo)**：Go core + CLI + 单/多项目 + 锁/revision + 哈希链 +
   `plan/review/approve/apply` + receipt/gate + `BUSY/CONFLICT/IDEMPOTENT/STALE` +
-  ssh-mcp runner 模板 + `remote_result.json` 入库 + `artifact list/verify`。
-- **v0.2**：`artifact fetch` + 远端 GC。
-- **v0.3**：可选静态 `dashboard.html`（只读，不引入 server）。
+  ssh-mcp runner 模板 + remote `code`/`environment` + TTY/token approval +
+  `artifact list/verify`（含 `--strict`）。
+- **v0.3**：`artifact fetch`、远端 GC、可选静态 `dashboard.html`。
 
 ---
 
