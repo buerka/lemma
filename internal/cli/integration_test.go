@@ -1650,3 +1650,88 @@ func TestRunnerEnvironmentFailureIsExplicit(t *testing.T) {
 		t.Fatalf("run status displayed an empty-environment hash:\n%s", human)
 	}
 }
+
+func TestRunnerInputResolution(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := t.TempDir()
+	workdir := newGitWorkdir(t)
+	configPath := filepath.Join(workdir, "configs", "train.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("seed: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, workdir, "add", "configs")
+	runGit(t, workdir, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "config")
+
+	code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "inputs",
+		"--host", "local", "--local-workdir", workdir, "--workdir", workdir, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--command", "true", "--config", "configs/train.yaml")
+	runID := "T1.default.default.seed0"
+	runDir := filepath.Join(root, "progress", "runs", runID)
+	uriRunID := "uri-input"
+	uriRunDir := filepath.Join(root, "progress", "runs", uriRunID)
+	uriHash := "sha256:" + strings.Repeat("a", 64)
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--run-id", uriRunID, "--command", "true", "--data", "ssh://gpu/data/input.bin", "--data-sha256", uriHash)
+
+	runRunner := func(dir, cwd string) schema.RemoteResult {
+		t.Helper()
+		cmd := exec.Command(python, filepath.Join(dir, "runner.py"), "--spec", filepath.Join(dir, "run_spec.json"))
+		cmd.Dir = cwd
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("runner from %s failed to execute: %v\n%s", cwd, err, output)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, "remote_result.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res schema.RemoteResult
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	fromRunDir := runRunner(runDir, runDir)
+	fromProjectRoot := runRunner(runDir, root)
+	if fromRunDir.Status != "succeeded" || fromRunDir.ExitCode != 0 {
+		t.Fatalf("relative input from run dir: %+v", fromRunDir)
+	}
+	if fromProjectRoot.Status != fromRunDir.Status || fromProjectRoot.ExitCode != fromRunDir.ExitCode || fromProjectRoot.Error != fromRunDir.Error {
+		t.Fatalf("runner cwd changed result: run=%+v root=%+v", fromRunDir, fromProjectRoot)
+	}
+
+	if err := os.WriteFile(configPath, []byte("seed: 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mismatch := runRunner(runDir, runDir)
+	if mismatch.Status != "failed" || mismatch.ExitCode != 3 || !strings.Contains(mismatch.Error, "input hash mismatch") {
+		t.Fatalf("changed input: %+v", mismatch)
+	}
+
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	missing := runRunner(runDir, runDir)
+	if missing.Status != "failed" || missing.ExitCode != 3 || missing.Error != "input missing: configs/train.yaml" {
+		t.Fatalf("missing input: %+v", missing)
+	}
+
+	uri := runRunner(uriRunDir, uriRunDir)
+	if uri.Status != "succeeded" || uri.ExitCode != 0 || uri.Error != "" {
+		t.Fatalf("URI input was not skipped: %+v", uri)
+	}
+}

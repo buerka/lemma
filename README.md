@@ -942,7 +942,8 @@ echo "$code" > "$RUN_DIR/exit_code"
 exit "$code"
 ```
 
-`runner.py` 读 `run_spec.json`，校验输入哈希，执行 `command`，在
+`runner.py` 读 `run_spec.json`，按 `workdir` 解析 inputs（URI 跳过校验）；
+输入缺失或哈希不匹配时返回 `failed` / `exit_code=3`。然后执行 `command`，在
 `remote.workdir` 重新采集 `git rev-parse HEAD`、dirty patch hash、
 `python --version`、`pip freeze` 和 `nvidia-smi`（存在时），把远端真实的
 `code` / `environment` / `environment_hash` 以及输出哈希写入结果。环境采集

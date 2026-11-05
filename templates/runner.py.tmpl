@@ -34,6 +34,16 @@ def now():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def resolve_input(workdir, path):
+    """Resolve an input against workdir. URIs are remote and skip validation."""
+    if "://" in path:
+        return None
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(workdir, path)
+    return path
+
+
 def run_command(command, cwd=None, env=None):
     """Run a command and return (returncode, combined stdout/stderr)."""
     try:
@@ -124,12 +134,18 @@ def main():
     run_env.update(spec.get("env") or {})
 
     for item in spec.get("inputs", []):
-        path = os.path.expanduser(item.get("path", ""))
+        path = item.get("path", "")
         expected = item.get("sha256", "")
-        if path and expected and os.path.exists(path):
-            actual = sha256_file(path)
+        resolved = resolve_input(workdir, path)
+        if resolved is None:
+            continue
+        if not os.path.isfile(resolved):
+            status, exit_code, error = "failed", 3, "input missing: " + path
+            break
+        if expected:
+            actual = sha256_file(resolved)
             if actual != expected:
-                print("input hash mismatch: %s expected=%s actual=%s" % (path, expected, actual))
+                print("input hash mismatch: %s expected=%s actual=%s" % (resolved, expected, actual))
                 status, exit_code, error = "failed", 3, "input hash mismatch: " + path
                 break
 
