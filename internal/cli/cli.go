@@ -15,7 +15,7 @@ import (
 )
 
 // Version is overridden by GoReleaser via -ldflags at release time.
-var Version = "0.3.1"
+var Version = "0.3.2"
 
 type Globals struct {
 	Project     string
