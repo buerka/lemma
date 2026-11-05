@@ -656,19 +656,27 @@ func TestArtifactVerifyDetectsCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, _ := runCLI("--json", "--project", root, "artifact", "verify")
-	if code != 1 {
-		t.Fatalf("corrupt artifact exit = %d, want 1\n%s", code, out)
+	if code != 0 {
+		t.Fatalf("default verify should ignore runfiles, exit = %d\n%s", code, out)
 	}
 	report := decodeJSON[core.ArtifactReport](t, out)
+	if !report.OK || report.Checked != 0 {
+		t.Fatalf("default artifact verify checked runfiles: %+v", report)
+	}
+	code, out, _ = runCLI("--json", "--project", root, "artifact", "verify", "--all")
+	if code != 1 {
+		t.Fatalf("corrupt runfile with --all exit = %d, want 1\n%s", code, out)
+	}
+	report = decodeJSON[core.ArtifactReport](t, out)
 	if report.OK || report.Failed == 0 {
-		t.Fatalf("corrupt artifact was accepted: %+v", report)
+		t.Fatalf("corrupt runfile was accepted by --all: %+v", report)
 	}
 	if err := os.WriteFile(metricsPath, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	report = decodeJSON[core.ArtifactReport](t, mustRun(t, "--json", "--project", root, "artifact", "verify"))
+	report = decodeJSON[core.ArtifactReport](t, mustRun(t, "--json", "--project", root, "artifact", "verify", "--all"))
 	if !report.OK {
-		t.Fatalf("artifact verify after restore: %+v", report.Checks)
+		t.Fatalf("artifact verify --all after restore: %+v", report.Checks)
 	}
 }
 

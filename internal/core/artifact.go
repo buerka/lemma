@@ -110,7 +110,7 @@ func ListArtifacts(l *Ledger, runID string, all bool) ([]ArtifactEntry, error) {
 // Remote artifacts are reported as remote-verified only when the runner
 // recorded a verified hash; remote-unverified is a warning by default and a
 // failure in strict mode.
-func VerifyArtifacts(l *Ledger, runID string, strict bool, lockTimeout time.Duration) (*ArtifactReport, error) {
+func VerifyArtifacts(l *Ledger, runID string, all, strict bool, lockTimeout time.Duration) (*ArtifactReport, error) {
 	lock, err := AcquireLock(l.Dir, lockTimeout)
 	if err != nil {
 		return nil, err
@@ -130,23 +130,25 @@ func VerifyArtifacts(l *Ledger, runID string, strict bool, lockTimeout time.Dura
 			continue
 		}
 		runDir := l.RunDir(id)
-		for _, f := range m.Files {
-			p := filepath.Join(runDir, filepath.FromSlash(f.Path))
-			check := ArtifactCheck{RunID: id, Kind: "file", Path: f.Path, SHA256: f.SHA256}
-			b, err := os.ReadFile(p)
-			if err != nil {
-				check.Status = "missing"
-				check.Detail = err.Error()
-				report.Failed++
-			} else if HashFileBytes(b) != f.SHA256 {
-				check.Status = "mismatch"
-				check.Detail = fmt.Sprintf("size %d, expected hash %s", len(b), f.SHA256)
-				report.Failed++
-			} else {
-				check.Status = "ok"
+		if all {
+			for _, f := range m.Files {
+				p := filepath.Join(runDir, filepath.FromSlash(f.Path))
+				check := ArtifactCheck{RunID: id, Kind: "runfile", Path: f.Path, SHA256: f.SHA256}
+				b, err := os.ReadFile(p)
+				if err != nil {
+					check.Status = "missing"
+					check.Detail = err.Error()
+					report.Failed++
+				} else if HashFileBytes(b) != f.SHA256 {
+					check.Status = "mismatch"
+					check.Detail = fmt.Sprintf("size %d, expected hash %s", len(b), f.SHA256)
+					report.Failed++
+				} else {
+					check.Status = "ok"
+				}
+				report.Checked++
+				report.Checks = append(report.Checks, check)
 			}
-			report.Checked++
-			report.Checks = append(report.Checks, check)
 		}
 		for _, a := range m.Artifacts {
 			check := ArtifactCheck{

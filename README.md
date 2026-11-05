@@ -641,7 +641,7 @@ lemma/                        # this tool
 | `lem status` | 重新生成 `STATE.md` | 快照 |
 | `lem next` | 返回下一个可执行任务 | task JSON |
 | `lem artifact list` | 列出声明的 outputs（`--all` 显示 runfiles） | 路径、URI、SHA-256、verified |
-| `lem artifact verify` | 校验本地 manifest；区分 remote-verified/remote-unverified | exit code + report / `--strict` |
+| `lem artifact verify` | 默认校验声明 outputs；`--all` 再校验 runfiles；区分 remote-verified/remote-unverified | exit code + report / `--all` / `--strict` |
 | `lem artifact fetch` | 尚未实现，返回 `NOT_IMPLEMENTED` | — |
 | `lem migrate` | 检查 schema 版本（v0.2 没有迁移） | 版本 |
 
@@ -986,10 +986,11 @@ predictions/
 - runner 对声明 outputs 计算 SHA-256，并写入 `verified: true`、`verified_at`、`host`。
 - `lem artifact list` 默认只列出声明的 outputs；`--all` 额外显示
   `run_spec.json`、`REMOTE_TASK.md`、`runner.*` 等 runfile。
-- `lem artifact verify` 对本地 manifest 文件重算哈希；远端 artifact 分为
-  `remote-verified`（runner 记录过验证）和 `remote-unverified`（未记录）。
-  默认 `remote-unverified` 是 warning；`--strict` 把它当作失败。
-  没有 runner 验证记录时不会声称 verified。
+- `lem artifact verify` 默认只检查 `manifest.Artifacts`（声明的 outputs）；
+  `--all` 才检查 `run_spec.json`、`REMOTE_TASK.md`、`runner.*` 等 runfiles。
+  本地文件会重算哈希；远端 artifact 分为 `remote-verified`（runner 记录过验证）
+  和 `remote-unverified`（未记录）。默认 `remote-unverified` 是 warning；
+  `--strict` 把它当作失败。没有 runner 验证记录时不会声称 verified。
 - `lem gc` 尚未实现。
 
 ---
@@ -1013,10 +1014,10 @@ predictions/
 v0.2 不记录 `split_hash`：split manifest 尚未纳入工具契约。需要时在 RA 侧
 记录并在 `--evidence` 中引用。
 
-`lem artifact verify` 检查本地 manifest 的文件是否缺失、SHA-256 是否匹配，
-并把远端 artifact 区分为 `remote-verified` / `remote-unverified`；`--strict`
-使未验证的远端 artifact 失败。`lem verify` 负责 schema、事件链、gate、receipt
-和 git 状态。
+`lem artifact verify` 默认检查声明 outputs 的本地/远端状态，`--all` 才检查
+runfiles；它把远端 artifact 区分为 `remote-verified` / `remote-unverified`，
+`--strict` 使未验证的远端 artifact 失败。`lem verify` 负责 schema、事件链、
+gate、receipt 和 git 状态。
 
 ---
 

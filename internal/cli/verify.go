@@ -111,8 +111,9 @@ func cmdArtifactList(c *Context, args []string) error {
 func cmdArtifactVerify(c *Context, args []string) error {
 	fs := flag.NewFlagSet("artifact verify", flag.ContinueOnError)
 	runID := fs.String("run", "", "run id")
+	all := fs.Bool("all", false, "also verify runfiles")
 	strict := fs.Bool("strict", false, "fail on remote-unverified artifacts")
-	ok, err := parseFlags(c, fs, args, "Usage: lem artifact verify [run_id] [--run ID] [--strict]\n")
+	ok, err := parseFlags(c, fs, args, "Usage: lem artifact verify [run_id] [--run ID] [--all] [--strict]\n")
 	if !ok {
 		return err
 	}
@@ -125,7 +126,7 @@ func cmdArtifactVerify(c *Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	report, err := core.VerifyArtifacts(l, *runID, *strict, c.Globals.LockTimeout)
+	report, err := core.VerifyArtifacts(l, *runID, *all, *strict, c.Globals.LockTimeout)
 	if err != nil {
 		return err
 	}
