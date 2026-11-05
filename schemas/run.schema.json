@@ -13,6 +13,7 @@
     "split": {"type": "string"},
     "seed": {"type": "integer"},
     "host": {"type": "string"},
+    "local_workdir": {"type": "string"},
     "workdir": {"type": "string"},
     "run_root": {"type": "string"},
     "python": {"type": "string"},

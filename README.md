@@ -2,7 +2,7 @@
 
 > A minimal, git-native progress ledger for human–agent research projects, with remote execution through [ssh-mcp](https://github.com/buerka/ssh-mcp).
 
-**Name:** Lemma · **Command:** `lem` (alias: `lemma`) · **Status:** v0.2 implemented · **Go:** 1.22+ · **License:** MIT
+**Name:** Lemma · **Command:** `lem` (alias: `lemma`) · **Status:** v0.3 implemented · **Go:** 1.22+ · **License:** MIT
 
 [![ci](https://github.com/buerka/lemma/actions/workflows/ci.yml/badge.svg)](https://github.com/buerka/lemma/actions/workflows/ci.yml)
 [![release](https://github.com/buerka/lemma/actions/workflows/release.yml/badge.svg)](https://github.com/buerka/lemma/actions/workflows/release.yml)
@@ -214,9 +214,9 @@ release lock
 `flock` 在本地文件系统可靠；NFS/SMB 的锁语义不一致。跨机器写同一个 ledger 时：
 
 - 限制同一项目只有一个写者，其他机器只读；
-- 或者后续加一个轻量 HTTP 写服务（不是 v0.2 范围）。
+- 或者后续加一个轻量 HTTP 写服务（不是 v0.3 范围）。
 
-当前 v0.2 假设：**同一台机器、普通 CLI 进程、每项目一个 ledger**。
+当前 v0.3 假设：**同一台机器、普通 CLI 进程、每项目一个 ledger**。
 
 ### Testing
 
@@ -643,7 +643,7 @@ lemma/                        # this tool
 | `lem artifact list` | 列出声明的 outputs（`--all` 显示 runfiles） | 路径、URI、SHA-256、verified |
 | `lem artifact verify` | 默认校验声明 outputs；`--all` 再校验 runfiles；区分 remote-verified/remote-unverified | exit code + report / `--all` / `--strict` |
 | `lem artifact fetch` | 尚未实现，返回 `NOT_IMPLEMENTED` | — |
-| `lem migrate` | 检查 schema 版本（v0.2 没有迁移） | 版本 |
+| `lem migrate` | 检查 schema 版本（v0.3 没有迁移） | 版本 |
 
 所有命令支持 `--json` 和全局 `--project`；人类默认看到 Markdown。
 `--json` 时成功结果写 stdout，错误对象也写 stdout；人类错误写 stderr。
@@ -981,7 +981,7 @@ predictions/
 
 - 数据集只保留一份 canonical copy；首次 `sha256sum` 后写进 `project.yaml`。
 - 每次 run 只校验数据集哈希，不复制。
-- checkpoint、日志、预测不拉回本地；`lem artifact fetch` 在 v0.2 尚未实现。
+- checkpoint、日志、预测不拉回本地；`lem artifact fetch` 尚未实现。
 - artifact 用 `URI + SHA-256` 引用，不用本地绝对路径。
 - runner 对声明 outputs 计算 SHA-256，并写入 `verified: true`、`verified_at`、`host`。
 - `lem artifact list` 默认只列出声明的 outputs；`--all` 额外显示
@@ -1011,7 +1011,7 @@ predictions/
 | `metrics` | `metrics.json` |
 | `artifacts` | URI + SHA-256；runner 验证的远端产物带 `verified`/`verified_at`/`host` |
 
-v0.2 不记录 `split_hash`：split manifest 尚未纳入工具契约。需要时在 RA 侧
+v0.3 不记录 `split_hash`：split manifest 尚未纳入工具契约。需要时在 RA 侧
 记录并在 `--evidence` 中引用。
 
 `lem artifact verify` 默认检查声明 outputs 的本地/远端状态，`--all` 才检查
@@ -1098,13 +1098,13 @@ lem apply progress/changesets/cs-20261102-002.json
 - Release command:
 
   ```bash
-  git tag -a v0.2.0 -m "Lemma v0.2.0"
-  git push origin v0.2.0
+  git tag -a v0.3.0 -m "Lemma v0.3.0"
+  git push origin v0.3.0
   ```
 
 ### Implementation status and known limits
 
-Implemented in v0.2:
+Implemented in v0.3:
 
 - `init`, `doctor`, `task add/update/list`, `run start/finish/status`,
   `status`, `next`, `plan`, `review`, `approve`, `apply`, `log`, `show`,
@@ -1114,18 +1114,21 @@ Implemented in v0.2:
   `progress/` git repo, atomic writes, and `BUSY/CONFLICT/IDEMPOTENT/STALE`
   semantics.
 - Local run manifests and artifact listing/verification.
-- `remote.workdir` as the code/config/data contract root.
+- Separate `local.workdir` (local clone/provenance) and `remote.workdir`
+  (runner cwd); `run_spec.local_workdir` is local-only.
 - TTY/token approval gates with `approval_method`.
 - Remote `code` / `environment` / `environment_hash` recorded by the runner.
-- `remote-verified` / `remote-unverified` artifacts and `artifact verify --strict`.
+- Explicit `environment_error` when environment collection is empty.
+- `remote-verified` / `remote-unverified` artifacts, `artifact verify --strict`,
+  and aligned default scopes for `artifact list` / `artifact verify`.
 
-Not implemented in v0.2:
+Not implemented in v0.3:
 
 - `artifact fetch`, `gc`, MCP server, direct SSH, dashboard/TUI, DVC/MLflow,
   remote GC, multi-user permissions, automatic scientific judgment.
 - `lem migrate` only reports the schema version; there are no older schemas to
   migrate from yet.
-- split manifests / `split_hash` are not part of the v0.2 contract.
+- split manifests / `split_hash` are not part of the v0.3 contract.
 - `apply` commits the receipt in a second commit after the state/event commit.
   This keeps the ledger clean and the receipt auditable without rewriting
   history.
@@ -1144,11 +1147,12 @@ Not implemented in v0.2:
 
 ## Roadmap
 
-- **v0.2 (this repo)**：Go core + CLI + 单/多项目 + 锁/revision + 哈希链 +
+- **v0.3 (this repo)**：Go core + CLI + 单/多项目 + 锁/revision + 哈希链 +
   `plan/review/approve/apply` + receipt/gate + `BUSY/CONFLICT/IDEMPOTENT/STALE` +
-  ssh-mcp runner 模板 + remote `code`/`environment` + TTY/token approval +
-  `artifact list/verify`（含 `--strict`）。
-- **v0.3**：`artifact fetch`、远端 GC、可选静态 `dashboard.html`。
+  ssh-mcp runner 模板 + local/remote workdir 分离 + remote
+  `code`/`environment` + TTY/token approval + `artifact list/verify`
+  （含 `--strict` / `--all`） + `environment_error`。
+- **v0.4**：`artifact fetch`、远端 GC、可选静态 `dashboard.html`。
 
 ---
 
