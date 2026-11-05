@@ -74,6 +74,42 @@ func cmdDoctor(c *Context, args []string) error {
 	} else {
 		add("project.yaml", "ok", "remote fields present")
 	}
+
+	remotePath := l.RemoteWorkdirPath()
+	if remotePath == "" {
+		add("remote workdir", "warn", "remote.workdir is not configured")
+	} else {
+		add("remote workdir", "ok", "remote-only, not checked locally: "+remotePath)
+	}
+	if local := l.LocalWorkdir(); local != "" {
+		st, err := os.Stat(local)
+		switch {
+		case err != nil:
+			add("local workdir", "warn", local+" is missing; code provenance will be incomplete")
+		case !st.IsDir():
+			add("local workdir", "warn", local+" is not a directory; code provenance will be incomplete")
+		default:
+			repo := core.GitTopLevel(local)
+			if repo == "" {
+				add("local workdir", "warn", local+" is not a git repository; code provenance will be incomplete")
+			} else {
+				add("local workdir", "ok", local+" (git repo "+repo+")")
+				if clean, err := (core.Git{Dir: repo}).IsClean(); err != nil {
+					add("local workdir status", "warn", err.Error())
+				} else if clean {
+					add("local workdir status", "ok", "git working tree clean")
+				} else {
+					add("local workdir status", "warn", "git working tree is dirty; run provenance will include a patch hash")
+				}
+			}
+		}
+	} else if remotePath == "" {
+		add("local code fallback", "warn", "local.workdir is not set and remote.workdir is empty")
+	} else if st, err := os.Stat(remotePath); err == nil && st.IsDir() {
+		add("local code fallback", "ok", "remote.workdir is locally accessible: "+remotePath)
+	} else {
+		add("local code fallback", "warn", "remote.workdir is remote-only ("+remotePath+"); set local.workdir for local code provenance")
+	}
 	python := l.Project.Remote.Python
 	if python == "" {
 		python = "python3"

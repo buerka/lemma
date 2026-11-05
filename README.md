@@ -346,10 +346,14 @@ lemma        # same CLI
 lem init \
   --project myproject \
   --host gpu \
+  --local-workdir /path/to/local/clone \
   --workdir '~/project' \
   --run-root '~/.lem-runs' \
   --python python3
 ```
+
+`--local-workdir` 可选；不传时保持 v0.2 行为（本地解析回退 `remote.workdir`，
+仅当该路径在本地可访问）。
 
 `lem init` 默认在当前目录创建 `progress/`；在其他目录初始化时加 `--root <path>`。
 它也会创建 `progress/.git`，并写入第一条 `project.init` 事件与第一个 git commit。
@@ -382,6 +386,8 @@ lem project add myproject --root .
 ```yaml
 project: myproject
 schema_version: 1
+local:
+  workdir: /path/to/local/clone   # optional
 remote:
   transport: ssh-mcp
   host: gpu
@@ -392,15 +398,25 @@ storage:
   artifact_root: ssh://gpu/~/.lem-runs
 ```
 
-**Root vs workdir contract**
+**Root / local.workdir / remote.workdir contract**
 
 - `root`（`progress/` 的父目录）是**账本/项目元数据根**：`project.yaml`、
   `tasks.yaml`、`events.jsonl`、changesets、receipts 都在这里。
-- `remote.workdir` 是**代码仓库根**，也是 runner 执行命令时的 cwd。
-- `run start` 的 `codeInfo` 优先用 `remote.workdir` 找 git 仓库；找不到才回退 `root`。
-- `--config` / `--data` 的相对路径先按 `remote.workdir` 解析，再回退 `root`；
-  两处都找不到时，错误信息会同时列出尝试过的路径。
-- 如果代码和账本在同一个目录，可把 `remote.workdir` 设为 `root` 或留空。
+- `local.workdir` 是**本地代码 clone**，用于本地 `codeInfo`、config/data 哈希。
+  它是可选的，只服务本地溯源。
+- `remote.workdir` 是**远端代码仓库根**，也是 runner 执行命令时的 cwd。
+  lemma 不假设它在本地可访问，也不会把它当成本地路径。
+- 本地 code/config/data 解析顺序：
+  `local.workdir` -> `remote.workdir`（仅当该路径本地可访问）-> `root`。
+- `run start` 的 `codeInfo` 使用 `local.workdir` 的 git repo；旧 project.yaml
+  没有 `local:` 时，才按 v0.2 顺序回退。
+- `--config` / `--data` 的相对路径会**分别**在本地和远端 workdir 下解析。
+  两边布局必须使用同一个相对路径；如果本地/远端绝对路径不同，传相对路径，
+  不要把本地绝对路径写进 `run_spec`。
+- `run_spec.local_workdir` 只用于本地溯源；`run_spec.workdir` 仍是远端 runner
+  cwd。`REMOTE_TASK.md` 只包含远端信息，不传 `local_workdir`。
+- 如果代码和账本在同一个目录，可把 `local.workdir` / `remote.workdir` 设为
+  `root` 或留空。
 
 ### Verify the setup
 
@@ -408,7 +424,16 @@ storage:
 lem doctor
 ```
 
-它会检查本地 Python/git、`project.yaml` 字段、`~/.ssh/config` 里的 host 别名，并打印 runner 应使用的 ssh-mcp 工具名。它不会自己连远端。
+它会检查本地 Python/git、`project.yaml` 字段、`~/.ssh/config` 里的 host 别名，
+并打印 runner 应使用的 ssh-mcp 工具名。它不会自己连远端。
+
+`doctor` 还会检查：
+
+- 设置了 `local.workdir`：存在、是目录、是 git repo；缺失或非 git 会给 WARN，
+  并提示 code provenance 会不完整；git dirty 也会 WARN。
+- 未设置 `local.workdir`：检查 `remote.workdir` 是否本地可访问；不可访问会给
+  WARN，提示设置 `local.workdir`。
+- `remote.workdir` 始终标记为 `remote-only, not checked locally`。
 
 在 agent 里手动验证一次：
 
@@ -846,6 +871,7 @@ Manager Agent
   "project": "myproject",
   "task_id": "T1",
   "host": "gpu",
+  "local_workdir": "/path/to/local/clone",
   "workdir": "~/project",
   "run_root": "~/.lem-runs",
   "python": "python3",
@@ -964,7 +990,7 @@ predictions/
 
 | Field | How |
 |---|---|
-| `code_commit` | `git -C <remote.workdir or root> rev-parse HEAD`（远端 runner 会重新记录） |
+| `code_commit` | 本地 `git -C <local.workdir or accessible remote.workdir or root>`；远端 runner 在 `remote.workdir` 重新记录 |
 | `code_patch_hash` | 本地/远端 `git diff` + `git status` 的 SHA-256（dirty 时） |
 | `config_hash` | canonical JSON 或配置文件字节的 SHA-256 |
 | `data_sha256` | 本地 `sha256sum <data_path>`；远端 URI 由 `--data-sha256` 提供 |

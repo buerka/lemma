@@ -16,12 +16,14 @@ func cmdInit(c *Context, args []string) error {
 	projectName := fs.String("project", c.Globals.Project, "project name")
 	host := fs.String("host", "local", "ssh-mcp host alias")
 	workdir := fs.String("workdir", "~/project", "remote working directory")
+	localWorkdir := fs.String("local-workdir", "", "local clone used for code/config/data provenance")
 	runRoot := fs.String("run-root", "~/.lem-runs", "remote run directory")
 	python := fs.String("python", "python3", "remote Python interpreter")
 	ledger := fs.String("ledger", "progress", "ledger directory name")
 	root := fs.String("root", "", "project root (default: current directory)")
 	artifactRoot := fs.String("artifact-root", "", "artifact URI root (default derived)")
-	usage := `Usage: lem init [--project NAME] [--host gpu] [--workdir DIR] [--run-root DIR]
+	usage := `Usage: lem init [--project NAME] [--host gpu] [--local-workdir DIR]
+                [--workdir REMOTE_DIR] [--run-root DIR]
 
 Creates <root>/<ledger>/ as an independent git repository with project.yaml,
 tasks.yaml, events.jsonl, gates.jsonl, changesets/, receipts/, runs/, STATE.md
@@ -61,6 +63,7 @@ and DECISIONS.md.
 	p := schema.Project{
 		Project:       name,
 		SchemaVersion: schema.SchemaVersion,
+		Local:         schema.LocalConfig{Workdir: *localWorkdir},
 		Remote: schema.RemoteConfig{
 			Transport: "ssh-mcp",
 			Host:      *host,
@@ -81,16 +84,22 @@ and DECISIONS.md.
 	}
 	if c.Globals.JSON {
 		return c.jsonOut(map[string]any{
-			"project":  p.Project,
-			"root":     l.Root,
-			"ledger":   l.Dir,
-			"revision": ev.Hash,
-			"event":    ev,
+			"project":        p.Project,
+			"root":           l.Root,
+			"ledger":         l.Dir,
+			"local_workdir":  p.Local.Workdir,
+			"remote_workdir": p.Remote.Workdir,
+			"revision":       ev.Hash,
+			"event":          ev,
 		})
 	}
 	fmt.Fprintf(c.Out, "initialized %s\n", p.Project)
 	fmt.Fprintf(c.Out, "  root:     %s\n", l.Root)
 	fmt.Fprintf(c.Out, "  ledger:   %s\n", l.Dir)
+	if p.Local.Workdir != "" {
+		fmt.Fprintf(c.Out, "  local:    %s\n", l.LocalWorkdir())
+	}
+	fmt.Fprintf(c.Out, "  remote:   %s\n", p.Remote.Workdir)
 	fmt.Fprintf(c.Out, "  revision: %s\n", ev.Hash)
 	fmt.Fprintln(c.Out, "\nNext: lem task add --id T1 --title \"first task\" --phase P0")
 	return nil

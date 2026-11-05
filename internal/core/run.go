@@ -121,26 +121,27 @@ func StartRun(l *Ledger, opts StartRunOptions) (*StartRunResult, error) {
 		outputs = []string{"metrics.json", "manifest.json", "result.json", "checkpoints/"}
 	}
 	spec := schema.RunSpec{
-		RunID:      runID,
-		Project:    l.Project.Project,
-		TaskID:     opts.TaskID,
-		Method:     opts.Method,
-		Split:      opts.Split,
-		Seed:       opts.Seed,
-		Host:       l.Project.Remote.Host,
-		Workdir:    l.Project.Remote.Workdir,
-		RunRoot:    l.Project.Remote.RunRoot,
-		Python:     python,
-		Command:    command,
-		Env:        env,
-		Inputs:     inputs,
-		Outputs:    outputs,
-		Code:       code,
-		ConfigHash: configHash,
-		ConfigPath: configPath,
-		Data:       data,
-		CreatedAt:  l.NowUTC(),
-		Revision:   rev,
+		RunID:        runID,
+		Project:      l.Project.Project,
+		TaskID:       opts.TaskID,
+		Method:       opts.Method,
+		Split:        opts.Split,
+		Seed:         opts.Seed,
+		Host:         l.Project.Remote.Host,
+		LocalWorkdir: l.LocalWorkdir(),
+		Workdir:      l.Project.Remote.Workdir,
+		RunRoot:      l.Project.Remote.RunRoot,
+		Python:       python,
+		Command:      command,
+		Env:          env,
+		Inputs:       inputs,
+		Outputs:      outputs,
+		Code:         code,
+		ConfigHash:   configHash,
+		ConfigPath:   configPath,
+		Data:         data,
+		CreatedAt:    l.NowUTC(),
+		Revision:     rev,
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, Wrap(CodeGeneral, "invalid run spec", err)
@@ -234,6 +235,8 @@ func StartRun(l *Ledger, opts StartRunOptions) (*StartRunResult, error) {
 		"dirty":           code.Dirty,
 		"data_sha256":     dataSHA(data),
 		"host":            l.Project.Remote.Host,
+		"local_workdir":   l.LocalWorkdir(),
+		"workdir":         l.Project.Remote.Workdir,
 	})
 	if err != nil {
 		return nil, err
@@ -437,28 +440,86 @@ func (l *Ledger) codeInfo() schema.CodeInfo {
 	return schema.CodeInfo{Repo: repo, Commit: commit, PatchHash: HashFileBytes([]byte(patch)), Dirty: true}
 }
 
-// codeRoot returns the git repository used to record run reproducibility.
-// remote.workdir is the code repository root; root is only a fallback for
-// projects that keep code and ledger in the same directory.
+// codeRoot returns the local git repository used to record run reproducibility.
+// The order is local.workdir -> remote.workdir (only if it exists locally) ->
+// project root. remote.workdir is never assumed to be a local path.
 func (l *Ledger) codeRoot() string {
-	if wd := l.resolvedWorkdir(); wd != "" {
-		if repo := GitTopLevel(wd); repo != "" {
+	for _, candidate := range l.localCodeCandidates() {
+		if repo := GitTopLevel(candidate); repo != "" {
 			return repo
 		}
 	}
-	return GitTopLevel(l.Root)
+	return ""
 }
 
-func (l *Ledger) resolvedWorkdir() string {
-	wd := strings.TrimSpace(l.Project.Remote.Workdir)
-	if wd == "" {
+// LocalWorkdir returns the configured local clone path, expanded and resolved
+// relative to the project root when necessary. It is empty when unset.
+func (l *Ledger) LocalWorkdir() string {
+	return resolveConfiguredPath(l.Root, l.Project.Local.Workdir)
+}
+
+// RemoteWorkdirPath returns the configured remote path as a local candidate.
+// Callers must check os.Stat before treating it as locally accessible.
+func (l *Ledger) RemoteWorkdirPath() string {
+	return resolveConfiguredPath(l.Root, l.Project.Remote.Workdir)
+}
+
+func resolveConfiguredPath(root, p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
 		return ""
 	}
-	wd = expandHome(wd)
-	if !filepath.IsAbs(wd) {
-		wd = filepath.Join(l.Root, wd)
+	p = expandHome(p)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, p)
 	}
-	return filepath.Clean(wd)
+	return filepath.Clean(p)
+}
+
+func (l *Ledger) localCodeCandidates() []string {
+	var out []string
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		st, err := os.Stat(p)
+		if err != nil || !st.IsDir() {
+			return
+		}
+		for _, existing := range out {
+			if existing == p {
+				return
+			}
+		}
+		out = append(out, p)
+	}
+	add(l.LocalWorkdir())
+	add(l.RemoteWorkdirPath())
+	add(l.Root)
+	return out
+}
+
+func (l *Ledger) inputCandidates() []string {
+	var out []string
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		for _, existing := range out {
+			if existing == p {
+				return
+			}
+		}
+		out = append(out, p)
+	}
+	add(l.LocalWorkdir())
+	if remote := l.RemoteWorkdirPath(); remote != "" {
+		if st, err := os.Stat(remote); err == nil && st.IsDir() {
+			add(remote)
+		}
+	}
+	add(l.Root)
+	return out
 }
 
 func expandHome(p string) string {
@@ -519,11 +580,15 @@ func (l *Ledger) configInfo(opts StartRunOptions) (string, []schema.InputRef, st
 		if err != nil {
 			return "", nil, "", err
 		}
+		specPath, err := l.specInputPath("config file", opts.Config, p)
+		if err != nil {
+			return "", nil, "", err
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
 			return "", nil, "", Wrap(CodeGeneral, "read config file", err)
 		}
-		return HashFileBytes(b), []schema.InputRef{{Path: opts.Config, SHA256: HashFileBytes(b)}}, opts.Config, nil
+		return HashFileBytes(b), []schema.InputRef{{Path: specPath, SHA256: HashFileBytes(b)}}, specPath, nil
 	}
 	h, err := HashValue(map[string]any{
 		"method":  opts.Method,
@@ -553,21 +618,26 @@ func (l *Ledger) dataInfo(opts StartRunOptions) (*schema.DataRef, *schema.InputR
 		if err != nil {
 			return nil, nil, err
 		}
+		specPath, err := l.specInputPath("data file", opts.Data, p)
+		if err != nil {
+			return nil, nil, err
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
 			return nil, nil, Wrap(CodeGeneral, "read data file", err)
 		}
-		ref.Path = opts.Data
+		ref.Path = specPath
 		ref.SHA256 = HashFileBytes(b)
+		in := &schema.InputRef{Path: specPath, SHA256: ref.SHA256}
+		return ref, in, nil
 	}
 	in := &schema.InputRef{Path: opts.Data, SHA256: ref.SHA256}
 	return ref, in, nil
 }
 
 // resolveInputPath resolves a local config/data path. Relative paths are looked
-// up under remote.workdir (the code repository root and runner cwd) first, then
-// under the project root (the ledger/metadata root). Errors list every path
-// that was tried.
+// up under local.workdir, then remote.workdir only when it exists locally, then
+// the project root. Errors list every local path that was tried.
 func (l *Ledger) resolveInputPath(kind, p string) (string, error) {
 	if filepath.IsAbs(p) {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
@@ -575,25 +645,36 @@ func (l *Ledger) resolveInputPath(kind, p string) (string, error) {
 		}
 		return "", Errorf(CodeNotFound, "%s not found: %s", kind, p)
 	}
-	var candidates []string
-	if wd := l.resolvedWorkdir(); wd != "" {
-		candidates = append(candidates, filepath.Join(wd, p))
-	}
-	candidates = append(candidates, filepath.Join(l.Root, p))
-	seen := map[string]bool{}
 	var tried []string
-	for _, candidate := range candidates {
-		candidate = filepath.Clean(candidate)
-		if seen[candidate] {
-			continue
-		}
-		seen[candidate] = true
+	for _, base := range l.inputCandidates() {
+		candidate := filepath.Clean(filepath.Join(base, p))
 		tried = append(tried, candidate)
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 			return candidate, nil
 		}
 	}
-	return "", Errorf(CodeNotFound, "%s not found; tried %s (set remote.workdir for the code repo or use an absolute path)", kind, strings.Join(tried, " and "))
+	return "", Errorf(CodeNotFound, "%s not found; tried %s (set local.workdir or remote.workdir, or use an absolute path)", kind, strings.Join(tried, " and "))
+}
+
+// specInputPath keeps remote-facing config/data paths relative. With a
+// local.workdir configured, an absolute local path is accepted only inside that
+// clone and is recorded as a relative path for the remote runner.
+func (l *Ledger) specInputPath(kind, original, resolved string) (string, error) {
+	if !filepath.IsAbs(original) {
+		return original, nil
+	}
+	local := l.LocalWorkdir()
+	if local == "" {
+		return original, nil
+	}
+	if !WithinDir(local, resolved) {
+		return "", Errorf(CodeUsage, "%s absolute path must be inside local.workdir %s; use a relative path", kind, local)
+	}
+	rel, err := filepath.Rel(local, resolved)
+	if err != nil {
+		return "", Wrap(CodeUsage, "relativize "+kind+" path", err)
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 func dataSHA(d *schema.DataRef) string {

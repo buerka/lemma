@@ -1342,3 +1342,174 @@ func TestNestedHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalRemoteWorkdirSeparation(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := t.TempDir()
+	local := newGitWorkdir(t)
+	remoteOnly := "/remote/ROAD"
+	configBytes := []byte("seed: 7\n")
+	dataBytes := []byte("local dataset")
+	if err := os.MkdirAll(filepath.Join(local, "configs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(local, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(local, "configs", "train.yaml"), configBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(local, "data", "input.bin"), dataBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, local, "add", "configs", "data")
+	runGit(t, local, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "inputs")
+
+	code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "local-remote",
+		"--host", "local", "--local-workdir", local, "--workdir", remoteOnly, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	start := decodeJSON[core.StartRunResult](t, mustRun(t, "--json", "--project", root,
+		"run", "start", "--task", "T1", "--command", "true",
+		"--config", "configs/train.yaml", "--data", "data/input.bin"))
+	spec := start.Spec
+	if spec.LocalWorkdir != local {
+		t.Fatalf("local_workdir = %q, want %q", spec.LocalWorkdir, local)
+	}
+	if spec.Workdir != remoteOnly {
+		t.Fatalf("workdir = %q, want remote %q", spec.Workdir, remoteOnly)
+	}
+	wantCommit := runGit(t, local, "rev-parse", "HEAD")
+	if spec.Code.Repo != local || spec.Code.Commit != wantCommit {
+		t.Fatalf("code did not come from local.workdir: %+v", spec.Code)
+	}
+	if spec.Code.Dirty {
+		t.Fatalf("clean local.workdir reported dirty: %+v", spec.Code)
+	}
+	if spec.ConfigHash != core.HashFileBytes(configBytes) {
+		t.Fatalf("config hash did not come from local.workdir")
+	}
+	if spec.Data == nil || spec.Data.SHA256 != core.HashFileBytes(dataBytes) {
+		t.Fatalf("data hash did not come from local.workdir: %+v", spec.Data)
+	}
+	if spec.ConfigPath != "configs/train.yaml" || spec.Data.Path != "data/input.bin" {
+		t.Fatalf("spec paths should stay relative: config=%q data=%+v", spec.ConfigPath, spec.Data)
+	}
+	if len(spec.Inputs) != 2 || spec.Inputs[0].Path != "configs/train.yaml" || spec.Inputs[1].Path != "data/input.bin" {
+		t.Fatalf("inputs should stay relative for the remote runner: %+v", spec.Inputs)
+	}
+	remoteTask := mustReadFile(t, start.RemoteTaskPath)
+	if strings.Contains(remoteTask, local) || strings.Contains(remoteTask, "local_workdir") {
+		t.Fatalf("REMOTE_TASK.md leaked local.workdir:\n%s", remoteTask)
+	}
+
+	absStart := decodeJSON[core.StartRunResult](t, mustRun(t, "--json", "--project", root,
+		"run", "start", "--task", "T1", "--run-id", "abs-inputs", "--command", "true",
+		"--config", filepath.Join(local, "configs", "train.yaml"),
+		"--data", filepath.Join(local, "data", "input.bin")))
+	if absStart.Spec.ConfigPath != "configs/train.yaml" || absStart.Spec.Data.Path != "data/input.bin" {
+		t.Fatalf("absolute local inputs leaked into spec: config=%q data=%+v", absStart.Spec.ConfigPath, absStart.Spec.Data)
+	}
+}
+
+func TestLocalWorkdirMissingFallsBackToAccessibleRemote(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := t.TempDir()
+	remoteRepo := newGitWorkdir(t)
+	configBytes := []byte("seed: 9\n")
+	if err := os.MkdirAll(filepath.Join(remoteRepo, "configs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteRepo, "configs", "train.yaml"), configBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, remoteRepo, "add", "configs")
+	runGit(t, remoteRepo, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "cfg")
+	missingLocal := filepath.Join(t.TempDir(), "missing-clone")
+	code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "fallback",
+		"--host", "local", "--local-workdir", missingLocal, "--workdir", remoteRepo, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	start := decodeJSON[core.StartRunResult](t, mustRun(t, "--json", "--project", root,
+		"run", "start", "--task", "T1", "--command", "true", "--config", "configs/train.yaml"))
+	wantCommit := runGit(t, remoteRepo, "rev-parse", "HEAD")
+	if start.Spec.Code.Repo != remoteRepo || start.Spec.Code.Commit != wantCommit {
+		t.Fatalf("missing local.workdir did not fall back to accessible remote.workdir: %+v", start.Spec.Code)
+	}
+	if start.Spec.ConfigHash != core.HashFileBytes(configBytes) {
+		t.Fatal("config was not resolved from accessible remote.workdir fallback")
+	}
+}
+
+func TestDoctorLocalWorkdir(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	remoteOnly := "/remote/ROAD"
+	readChecks := func(root string) map[string]doctorCheck {
+		out := mustRun(t, "--json", "--project", root, "doctor")
+		var report struct {
+			OK     bool          `json:"ok"`
+			Checks []doctorCheck `json:"checks"`
+		}
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatal(err)
+		}
+		if !report.OK {
+			t.Fatalf("doctor reported failure for warnings: %+v", report.Checks)
+		}
+		m := map[string]doctorCheck{}
+		for _, chk := range report.Checks {
+			m[chk.Name] = chk
+		}
+		return m
+	}
+	initWithLocal := func(t *testing.T, local string) string {
+		t.Helper()
+		root := t.TempDir()
+		code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "doctor-local",
+			"--host", "local", "--local-workdir", local, "--workdir", remoteOnly, "--run-root", "~/.lem-runs")
+		if code != 0 {
+			t.Fatalf("init: %d %s %s", code, out, errOut)
+		}
+		return root
+	}
+
+	missingRoot := initWithLocal(t, filepath.Join(t.TempDir(), "missing-clone"))
+	checks := readChecks(missingRoot)
+	if checks["local workdir"].Status != "warn" || !strings.Contains(checks["local workdir"].Detail, "missing") {
+		t.Fatalf("missing local.workdir check: %+v", checks["local workdir"])
+	}
+	if checks["remote workdir"].Status != "ok" || !strings.Contains(checks["remote workdir"].Detail, "remote-only, not checked locally") {
+		t.Fatalf("remote workdir check: %+v", checks["remote workdir"])
+	}
+
+	nonGit := t.TempDir()
+	nonGitRoot := initWithLocal(t, nonGit)
+	checks = readChecks(nonGitRoot)
+	if checks["local workdir"].Status != "warn" || !strings.Contains(checks["local workdir"].Detail, "not a git repository") {
+		t.Fatalf("non-git local.workdir check: %+v", checks["local workdir"])
+	}
+
+	dirtyRepo := newGitWorkdir(t)
+	if err := os.WriteFile(filepath.Join(dirtyRepo, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirtyRoot := initWithLocal(t, dirtyRepo)
+	checks = readChecks(dirtyRoot)
+	if checks["local workdir status"].Status != "warn" || !strings.Contains(checks["local workdir status"].Detail, "dirty") {
+		t.Fatalf("dirty local.workdir check: %+v", checks["local workdir status"])
+	}
+
+	cleanRepo := newGitWorkdir(t)
+	cleanRoot := initWithLocal(t, cleanRepo)
+	checks = readChecks(cleanRoot)
+	if checks["local workdir"].Status != "ok" || checks["local workdir status"].Status != "ok" {
+		t.Fatalf("clean local.workdir checks: %+v %+v", checks["local workdir"], checks["local workdir status"])
+	}
+}
