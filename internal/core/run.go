@@ -353,6 +353,8 @@ func FinishRun(l *Ledger, runID string, opts FinishRunOptions) (*FinishRunResult
 	if err != nil {
 		return nil, err
 	}
+	manifest.EnvironmentError = rr.EnvironmentError
+	manifest.EnvironmentNotes = rr.EnvironmentNotes
 	manifestBytes, err := MarshalIndentNoEscape(manifest)
 	if err != nil {
 		return nil, Wrap(CodeGeneral, "encode manifest.json", err)
@@ -370,24 +372,26 @@ func FinishRun(l *Ledger, runID string, opts FinishRunOptions) (*FinishRunResult
 		environmentHash = h
 	}
 	result := schema.RunResult{
-		RunID:           runID,
-		Project:         l.Project.Project,
-		TaskID:          spec.TaskID,
-		Status:          rr.Status,
-		ExitCode:        rr.ExitCode,
-		StartedAt:       rr.StartedAt,
-		FinishedAt:      rr.FinishedAt,
-		RecordedAt:      l.NowUTC(),
-		Metrics:         metrics,
-		Artifacts:       artifacts,
-		LogsTail:        rr.LogsTail,
-		Error:           rr.Error,
-		Environment:     rr.Environment,
-		EnvironmentHash: environmentHash,
-		Code:            rr.Code,
-		ConfigHash:      rr.ConfigHash,
-		Data:            rr.Data,
-		Manifest:        manifest,
+		RunID:            runID,
+		Project:          l.Project.Project,
+		TaskID:           spec.TaskID,
+		Status:           rr.Status,
+		ExitCode:         rr.ExitCode,
+		StartedAt:        rr.StartedAt,
+		FinishedAt:       rr.FinishedAt,
+		RecordedAt:       l.NowUTC(),
+		Metrics:          metrics,
+		Artifacts:        artifacts,
+		LogsTail:         rr.LogsTail,
+		Error:            rr.Error,
+		Environment:      rr.Environment,
+		EnvironmentHash:  environmentHash,
+		EnvironmentError: rr.EnvironmentError,
+		EnvironmentNotes: rr.EnvironmentNotes,
+		Code:             rr.Code,
+		ConfigHash:       rr.ConfigHash,
+		Data:             rr.Data,
+		Manifest:         manifest,
 	}
 	resultBytes, err := MarshalIndentNoEscape(result)
 	if err != nil {
@@ -398,18 +402,19 @@ func FinishRun(l *Ledger, runID string, opts FinishRunOptions) (*FinishRunResult
 	}
 
 	ev, err := l.AppendEvent("run.finish", spec.TaskID, "", runID, map[string]any{
-		"status":           rr.Status,
-		"exit_code":        rr.ExitCode,
-		"metrics":          metrics,
-		"artifact_count":   len(artifacts),
-		"manifest_files":   len(manifest.Files),
-		"config_hash":      rr.ConfigHash,
-		"data_sha256":      dataSHA(rr.Data),
-		"code_commit":      rr.Code.Commit,
-		"code_patch_hash":  rr.Code.PatchHash,
-		"code_dirty":       rr.Code.Dirty,
-		"environment_hash": environmentHash,
-		"remote_result":    l.Rel(remotePath),
+		"status":            rr.Status,
+		"exit_code":         rr.ExitCode,
+		"metrics":           metrics,
+		"artifact_count":    len(artifacts),
+		"manifest_files":    len(manifest.Files),
+		"config_hash":       rr.ConfigHash,
+		"data_sha256":       dataSHA(rr.Data),
+		"code_commit":       rr.Code.Commit,
+		"code_patch_hash":   rr.Code.PatchHash,
+		"code_dirty":        rr.Code.Dirty,
+		"environment_hash":  environmentHash,
+		"environment_error": rr.EnvironmentError,
+		"remote_result":     l.Rel(remotePath),
 	})
 	if err != nil {
 		return nil, err

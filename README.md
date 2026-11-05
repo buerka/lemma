@@ -692,6 +692,7 @@ lemma/                        # this tool
     "nvidia_smi_hash": "sha256:..."
   },
   "environment_hash": "sha256:...",
+  "environment_error": "",
   "metrics": {"macro_f2": 0.89},
   "artifacts": [
     {
@@ -708,6 +709,14 @@ lemma/                        # this tool
 
 `code` / `environment` 由远端 runner 在 `remote.workdir` 实测后覆盖本地 spec 值；
 `environment_hash` 是远端 environment map 的 canonical JSON SHA-256。
+
+environment 采集失败时：
+
+- `environment` 为空，`environment_hash` 为空字符串，不产生 `{}` 的哈希；
+- `environment_error` 写明原因（例如 `python=... is not available`）；
+- 部分采集成功时保留实际字段和 hash，`environment_notes` 记录缺失项；
+- `remote_result.json`、`result.json`、`manifest.json` 都带这些可选字段；
+- `lem run status` 显示 `env: unavailable (...)`，而不是空 hash。
 
 ### Event
 
@@ -930,8 +939,9 @@ exit "$code"
 `runner.py` 读 `run_spec.json`，校验输入哈希，执行 `command`，在
 `remote.workdir` 重新采集 `git rev-parse HEAD`、dirty patch hash、
 `python --version`、`pip freeze` 和 `nvidia-smi`（存在时），把远端真实的
-`code` / `environment` / `environment_hash` 以及输出哈希写入结果。它不依赖
-`lem`，可以单独放在远端。
+`code` / `environment` / `environment_hash` 以及输出哈希写入结果。环境采集
+为空时不写 hash，而是写 `environment_error`；部分采集保留实际字段和 notes。
+它不依赖 `lem`，可以单独放在远端。
 
 ### Why not put SSH in `lem`
 
@@ -994,7 +1004,8 @@ predictions/
 | `code_patch_hash` | 本地/远端 `git diff` + `git status` 的 SHA-256（dirty 时） |
 | `config_hash` | canonical JSON 或配置文件字节的 SHA-256 |
 | `data_sha256` | 本地 `sha256sum <data_path>`；远端 URI 由 `--data-sha256` 提供 |
-| `environment_hash` | 远端 Python 版本、`pip freeze`、`nvidia-smi` 的 canonical JSON SHA-256 |
+| `environment_hash` | 远端 Python 版本、`pip freeze`、`nvidia-smi` 的 canonical JSON SHA-256；采集为空时留空 |
+| `environment_error` | 环境采集失败原因；为空环境时不伪造 hash |
 | `seed` | run spec |
 | `metrics` | `metrics.json` |
 | `artifacts` | URI + SHA-256；runner 验证的远端产物带 `verified`/`verified_at`/`host` |

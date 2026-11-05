@@ -1246,6 +1246,9 @@ func TestRunnerRecordsRemoteFingerprint(t *testing.T) {
 	if !schema.ValidHash(remote.EnvironmentHash) {
 		t.Fatalf("runner environment_hash = %q", remote.EnvironmentHash)
 	}
+	if remote.EnvironmentError != "" {
+		t.Fatalf("runner reported an environment error for valid python: %s", remote.EnvironmentError)
+	}
 	if len(remote.Artifacts) != 1 || !remote.Artifacts[0].Verified {
 		t.Fatalf("runner did not mark declared output verified: %+v", remote.Artifacts)
 	}
@@ -1511,5 +1514,73 @@ func TestDoctorLocalWorkdir(t *testing.T) {
 	checks = readChecks(cleanRoot)
 	if checks["local workdir"].Status != "ok" || checks["local workdir status"].Status != "ok" {
 		t.Fatalf("clean local.workdir checks: %+v %+v", checks["local workdir"], checks["local workdir status"])
+	}
+}
+
+func TestRunnerEnvironmentFailureIsExplicit(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	root := t.TempDir()
+	workdir := newGitWorkdir(t)
+	code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "env-fail",
+		"--host", "local", "--workdir", workdir, "--python", "/nonexistent/python", "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", root, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", root, "run", "start", "--task", "T1",
+		"--command", "true", "--env", "PATH=/nonexistent")
+	runID := "T1.default.default.seed0"
+	runDir := filepath.Join(root, "progress", "runs", runID)
+	cmd := exec.Command(python, filepath.Join(runDir, "runner.py"), "--spec", filepath.Join(runDir, "run_spec.json"))
+	cmd.Dir = runDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("runner failed: %v\n%s", err, output)
+	}
+	raw, err := os.ReadFile(filepath.Join(runDir, "remote_result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var remote schema.RemoteResult
+	if err := json.Unmarshal(raw, &remote); err != nil {
+		t.Fatal(err)
+	}
+	if remote.EnvironmentHash != "" {
+		t.Fatalf("failed environment must not have a hash: %q", remote.EnvironmentHash)
+	}
+	if remote.EnvironmentError == "" || !strings.Contains(remote.EnvironmentError, "/nonexistent/python") {
+		t.Fatalf("environment_error = %q", remote.EnvironmentError)
+	}
+	if len(remote.Environment) != 0 {
+		t.Fatalf("failed environment should be empty: %+v", remote.Environment)
+	}
+	manifest := decodeJSON[schema.Manifest](t, mustReadFile(t, filepath.Join(runDir, "manifest.json")))
+	if manifest.EnvironmentError == "" {
+		t.Fatal("manifest missing environment_error")
+	}
+	mustRun(t, "--json", "--project", root, "run", "finish", runID,
+		"--result", filepath.Join(runDir, "remote_result.json"))
+	l, err := core.Open(root, "progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := core.LoadRunResult(l, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.EnvironmentError == "" || result.EnvironmentHash != "" {
+		t.Fatalf("result environment error/hash = %q / %q", result.EnvironmentError, result.EnvironmentHash)
+	}
+	human := mustRun(t, "--project", root, "run", "status", runID)
+	if !strings.Contains(human, "env:     unavailable") || !strings.Contains(human, "/nonexistent/python") {
+		t.Fatalf("run status did not show unavailable environment:\n%s", human)
+	}
+	if strings.Contains(human, "env:     sha256:") {
+		t.Fatalf("run status displayed an empty-environment hash:\n%s", human)
 	}
 }

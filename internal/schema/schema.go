@@ -360,21 +360,23 @@ type Artifact struct {
 
 // RemoteResult is the JSON returned by a runner subagent.
 type RemoteResult struct {
-	RunID           string            `json:"run_id"`
-	Status          string            `json:"status"`
-	ExitCode        int               `json:"exit_code"`
-	StartedAt       string            `json:"started_at,omitempty"`
-	FinishedAt      string            `json:"finished_at,omitempty"`
-	Metrics         map[string]any    `json:"metrics,omitempty"`
-	Artifacts       []Artifact        `json:"artifacts,omitempty"`
-	Manifest        map[string]any    `json:"manifest,omitempty"`
-	LogsTail        string            `json:"logs_tail,omitempty"`
-	Error           string            `json:"error,omitempty"`
-	Environment     map[string]string `json:"environment,omitempty"`
-	EnvironmentHash string            `json:"environment_hash,omitempty"`
-	Code            CodeInfo          `json:"code,omitempty"`
-	ConfigHash      string            `json:"config_hash,omitempty"`
-	Data            *DataRef          `json:"data,omitempty"`
+	RunID            string            `json:"run_id"`
+	Status           string            `json:"status"`
+	ExitCode         int               `json:"exit_code"`
+	StartedAt        string            `json:"started_at,omitempty"`
+	FinishedAt       string            `json:"finished_at,omitempty"`
+	Metrics          map[string]any    `json:"metrics,omitempty"`
+	Artifacts        []Artifact        `json:"artifacts,omitempty"`
+	Manifest         map[string]any    `json:"manifest,omitempty"`
+	LogsTail         string            `json:"logs_tail,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	Environment      map[string]string `json:"environment,omitempty"`
+	EnvironmentHash  string            `json:"environment_hash,omitempty"`
+	EnvironmentError string            `json:"environment_error,omitempty"`
+	EnvironmentNotes []string          `json:"environment_notes,omitempty"`
+	Code             CodeInfo          `json:"code,omitempty"`
+	ConfigHash       string            `json:"config_hash,omitempty"`
+	Data             *DataRef          `json:"data,omitempty"`
 }
 
 func (r *RemoteResult) Normalize() {
@@ -410,33 +412,37 @@ func (r RemoteResult) Validate() error {
 
 // RunResult is the normalized progress/runs/<run_id>/result.json.
 type RunResult struct {
-	RunID           string            `json:"run_id"`
-	Project         string            `json:"project"`
-	TaskID          string            `json:"task_id"`
-	Status          string            `json:"status"`
-	ExitCode        int               `json:"exit_code"`
-	StartedAt       string            `json:"started_at,omitempty"`
-	FinishedAt      string            `json:"finished_at,omitempty"`
-	RecordedAt      string            `json:"recorded_at"`
-	Metrics         map[string]any    `json:"metrics"`
-	Artifacts       []Artifact        `json:"artifacts"`
-	LogsTail        string            `json:"logs_tail,omitempty"`
-	Error           string            `json:"error,omitempty"`
-	Environment     map[string]string `json:"environment,omitempty"`
-	EnvironmentHash string            `json:"environment_hash,omitempty"`
-	Code            CodeInfo          `json:"code"`
-	ConfigHash      string            `json:"config_hash,omitempty"`
-	Data            *DataRef          `json:"data,omitempty"`
-	Manifest        *Manifest         `json:"manifest,omitempty"`
+	RunID            string            `json:"run_id"`
+	Project          string            `json:"project"`
+	TaskID           string            `json:"task_id"`
+	Status           string            `json:"status"`
+	ExitCode         int               `json:"exit_code"`
+	StartedAt        string            `json:"started_at,omitempty"`
+	FinishedAt       string            `json:"finished_at,omitempty"`
+	RecordedAt       string            `json:"recorded_at"`
+	Metrics          map[string]any    `json:"metrics"`
+	Artifacts        []Artifact        `json:"artifacts"`
+	LogsTail         string            `json:"logs_tail,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	Environment      map[string]string `json:"environment,omitempty"`
+	EnvironmentHash  string            `json:"environment_hash,omitempty"`
+	EnvironmentError string            `json:"environment_error,omitempty"`
+	EnvironmentNotes []string          `json:"environment_notes,omitempty"`
+	Code             CodeInfo          `json:"code"`
+	ConfigHash       string            `json:"config_hash,omitempty"`
+	Data             *DataRef          `json:"data,omitempty"`
+	Manifest         *Manifest         `json:"manifest,omitempty"`
 }
 
 // Manifest is a local integrity manifest for a run directory.
 type Manifest struct {
-	RunID     string         `json:"run_id"`
-	Project   string         `json:"project"`
-	CreatedAt string         `json:"created_at"`
-	Files     []ManifestFile `json:"files"`
-	Artifacts []Artifact     `json:"artifacts,omitempty"`
+	RunID            string         `json:"run_id"`
+	Project          string         `json:"project"`
+	CreatedAt        string         `json:"created_at"`
+	Files            []ManifestFile `json:"files"`
+	Artifacts        []Artifact     `json:"artifacts,omitempty"`
+	EnvironmentError string         `json:"environment_error,omitempty"`
+	EnvironmentNotes []string       `json:"environment_notes,omitempty"`
 }
 
 type ManifestFile struct {

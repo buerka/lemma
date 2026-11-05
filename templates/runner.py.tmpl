@@ -74,21 +74,34 @@ def collect_code(workdir, spec):
 
 
 def collect_environment(python, workdir, env):
-    """Record remote interpreter/driver hashes, omitting unavailable tools."""
+    """Record remote interpreter/driver hashes.
+
+    Returns (environment, environment_hash, environment_error, notes).
+    An empty environment is not hashed: environment_hash is empty and
+    environment_error explains why collection failed.
+    """
     environment = {}
+    problems = []
     rc, version = run_command([python, "--version"], cwd=workdir, env=env)
     if rc == 0 and version:
         environment["python_version"] = version.splitlines()[0]
+    else:
+        detail = version or "command failed"
+        problems.append("python=%s is not available: %s" % (python, detail))
     rc, freeze = run_command([python, "-m", "pip", "freeze"], cwd=workdir, env=env)
     if rc == 0:
         environment["pip_freeze_hash"] = sha256_text(freeze)
+    else:
+        problems.append("pip freeze unavailable")
     rc, nvidia = run_command(["nvidia-smi"], cwd=workdir, env=env)
     if rc == 0:
         environment["nvidia_smi_hash"] = sha256_text(nvidia)
+    if not environment:
+        return {}, "", "; ".join(problems) or "environment collection failed", problems
     environment_hash = sha256_text(
         json.dumps(environment, sort_keys=True, separators=(",", ":"))
     )
-    return environment, environment_hash
+    return environment, environment_hash, "", problems
 
 
 def main():
@@ -138,7 +151,7 @@ def main():
             error = str(exc)
 
     remote_code = collect_code(workdir, spec)
-    environment, environment_hash = collect_environment(
+    environment, environment_hash, environment_error, environment_notes = collect_environment(
         spec.get("python") or "python3", workdir, run_env
     )
 
@@ -184,6 +197,8 @@ def main():
         "created_at": finished,
         "files": files,
         "artifacts": artifacts,
+        "environment_error": environment_error,
+        "environment_notes": environment_notes,
     }
     with open(os.path.join(run_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
@@ -204,6 +219,8 @@ def main():
         "code": remote_code,
         "environment": environment,
         "environment_hash": environment_hash,
+        "environment_error": environment_error,
+        "environment_notes": environment_notes,
         "config_hash": spec.get("config_hash", ""),
         "data": spec.get("data"),
     }

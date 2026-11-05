@@ -225,7 +225,13 @@ func cmdRunStatus(c *Context, args []string) error {
 	fmt.Fprintf(c.Out, "code:    %s %s (%s)\n", code.Commit, code.PatchHash, codeSource)
 	fmt.Fprintf(c.Out, "config:  %s\n", spec.ConfigHash)
 	if result != nil {
-		if result.EnvironmentHash != "" {
+		if result.EnvironmentError != "" {
+			if result.EnvironmentHash == "" {
+				fmt.Fprintf(c.Out, "env:     unavailable (%s)\n", result.EnvironmentError)
+			} else {
+				fmt.Fprintf(c.Out, "env:     partial %s (%s)\n", result.EnvironmentHash, result.EnvironmentError)
+			}
+		} else if result.EnvironmentHash != "" {
 			extra := ""
 			if py := result.Environment["python_version"]; py != "" {
 				extra = " (" + py + ")"
