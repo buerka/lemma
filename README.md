@@ -406,6 +406,8 @@ storage:
   它是可选的，只服务本地溯源。
 - `remote.workdir` 是**远端代码仓库根**，也是 runner 执行命令时的 cwd。
   lemma 不假设它在本地可访问，也不会把它当成本地路径。
+- `remote.workdir` 必须是绝对路径或以 `~/` 开头；`lem init` 和 `lem run start`
+  会拒绝相对路径（exit 2）。`local.workdir` 允许相对路径，按 `root` 解析。
 - 本地 code/config/data 解析顺序：
   `local.workdir` -> `remote.workdir`（仅当该路径本地可访问）-> `root`。
 - `run start` 的 `codeInfo` 使用 `local.workdir` 的 git repo；旧 project.yaml
@@ -419,8 +421,8 @@ storage:
 - 本地 provenance（local.workdir / remote.workdir）写入本地 `run.start` event
   payload，不写入远端 `run_spec.json`。`run_spec.json` 只包含远端
   `workdir`；`REMOTE_TASK.md` 保持现状，只含远端信息。
-- 如果代码和账本在同一个目录，可把 `local.workdir` / `remote.workdir` 设为
-  `root` 或留空。
+- 如果代码和账本在同一个目录，可把 `local.workdir` 设为 `root` 或留空；
+  `remote.workdir` 仍需是绝对路径或 `~/...`。
 
 ### Verify the setup
 
@@ -437,10 +439,14 @@ lem doctor
   并提示 code provenance 会不完整；git dirty 也会 WARN。
 - 未设置 `local.workdir`：检查 `remote.workdir` 是否本地可访问；不可访问会给
   WARN，提示设置 `local.workdir`。
-- local.workdir 缺失或不可用时，如果 remote.workdir 本地可访问，会明确显示
-  正在把 remote.workdir 作为本地 fallback 使用。
-- `remote.workdir` 始终标记为 `remote-only, not checked locally`；若它同时被
-  用作本地 fallback，会附加说明。
+- local.workdir 缺失或不可用时，如果 remote.workdir 本地可访问，会保留
+  `local code fallback` 行并说明正在使用 fallback。
+- remote.workdir 本地不可访问，或 local.workdir 已设置时：
+  `OK remote workdir  remote-only (not checked locally): <path>`。
+- local.workdir 未设置且 remote.workdir 本地可访问时：
+  `OK remote workdir  <path> (locally accessible; used as fallback)`。
+- 非法 remote.workdir（相对路径）会给出 WARN：`remote.workdir must be absolute
+  or start with ~/`。
 
 在 agent 里手动验证一次：
 
@@ -1131,6 +1137,8 @@ Implemented in v0.3.2:
   and aligned default scopes for `artifact list` / `artifact verify`.
 - Runner inputs resolved against `workdir`; URI inputs skipped; missing inputs
   and hash mismatches fail with exit code 3.
+- `remote.workdir` validation (absolute or `~/...`) in `init` / `run start`, plus
+  clearer `doctor` local/remote fallback wording.
 
 Not implemented in v0.3.2:
 

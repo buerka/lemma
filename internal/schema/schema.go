@@ -8,6 +8,7 @@ package schema
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -147,6 +148,13 @@ func (tf *TasksFile) Find(id string) *Task {
 
 func ValidRunID(s string) bool { return runIDRe.MatchString(s) }
 func ValidHash(s string) bool  { return hashRe.MatchString(s) }
+
+// ValidRemoteWorkdir requires a path that is unambiguous from any runner cwd.
+// local.workdir intentionally has no such restriction: it is resolved locally
+// relative to the project root.
+func ValidRemoteWorkdir(s string) bool {
+	return filepath.IsAbs(s) || strings.HasPrefix(s, "~/")
+}
 func ValidChangesetID(s string) bool {
 	return changesetRe.MatchString(s)
 }

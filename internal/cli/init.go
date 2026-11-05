@@ -23,7 +23,7 @@ func cmdInit(c *Context, args []string) error {
 	root := fs.String("root", "", "project root (default: current directory)")
 	artifactRoot := fs.String("artifact-root", "", "artifact URI root (default derived)")
 	usage := `Usage: lem init [--project NAME] [--host gpu] [--local-workdir DIR]
-                [--workdir REMOTE_DIR] [--run-root DIR]
+                [--workdir /absolute/remote/dir | '~/remote/dir'] [--run-root DIR]
 
 Creates <root>/<ledger>/ as an independent git repository with project.yaml,
 tasks.yaml, events.jsonl, gates.jsonl, changesets/, receipts/, runs/, STATE.md
@@ -36,6 +36,9 @@ and DECISIONS.md.
 	_ = ok
 	if fs.NArg() > 0 {
 		return core.Errorf(core.CodeUsage, "init does not accept positional arguments")
+	}
+	if !schema.ValidRemoteWorkdir(*workdir) {
+		return core.Errorf(core.CodeUsage, "remote.workdir must be absolute or start with ~/")
 	}
 	if *root == "" {
 		cwd, err := os.Getwd()

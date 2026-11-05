@@ -1525,8 +1525,12 @@ func TestDoctorLocalWorkdir(t *testing.T) {
 	initWithLocal := func(t *testing.T, local, remote string) string {
 		t.Helper()
 		root := t.TempDir()
-		code, out, errOut := runCLI("--json", "init", "--root", root, "--project", "doctor-local",
-			"--host", "local", "--local-workdir", local, "--workdir", remote, "--run-root", "~/.lem-runs")
+		args := []string{"--json", "init", "--root", root, "--project", "doctor-local",
+			"--host", "local", "--workdir", remote, "--run-root", "~/.lem-runs"}
+		if local != "" {
+			args = append(args, "--local-workdir", local)
+		}
+		code, out, errOut := runCLI(args...)
 		if code != 0 {
 			t.Fatalf("init: %d %s %s", code, out, errOut)
 		}
@@ -1538,7 +1542,7 @@ func TestDoctorLocalWorkdir(t *testing.T) {
 	if checks["local workdir"].Status != "warn" || !strings.Contains(checks["local workdir"].Detail, "missing") {
 		t.Fatalf("missing local.workdir check: %+v", checks["local workdir"])
 	}
-	if checks["remote workdir"].Status != "ok" || !strings.Contains(checks["remote workdir"].Detail, "remote-only, not checked locally") {
+	if checks["remote workdir"].Status != "ok" || !strings.Contains(checks["remote workdir"].Detail, "remote-only (not checked locally)") {
 		t.Fatalf("remote workdir check: %+v", checks["remote workdir"])
 	}
 	if checks["local code fallback"].Status != "warn" {
@@ -1554,8 +1558,39 @@ func TestDoctorLocalWorkdir(t *testing.T) {
 	if checks["local code fallback"].Status != "ok" || !strings.Contains(checks["local code fallback"].Detail, "falling back") {
 		t.Fatalf("fallback wording: %+v", checks["local code fallback"])
 	}
-	if !strings.Contains(checks["remote workdir"].Detail, "locally accessible for fallback only") {
-		t.Fatalf("remote workdir fallback hint: %+v", checks["remote workdir"])
+	if !strings.Contains(checks["remote workdir"].Detail, "remote-only (not checked locally)") {
+		t.Fatalf("local.workdir configured must keep remote-only wording: %+v", checks["remote workdir"])
+	}
+
+	localUnsetInaccessible := initWithLocal(t, "", remoteOnly)
+	checks = readChecks(localUnsetInaccessible)
+	if checks["remote workdir"].Status != "ok" || !strings.Contains(checks["remote workdir"].Detail, "remote-only (not checked locally)") {
+		t.Fatalf("local unset + inaccessible remote: %+v", checks["remote workdir"])
+	}
+	if checks["local code fallback"].Status != "warn" {
+		t.Fatalf("local unset + inaccessible remote fallback: %+v", checks["local code fallback"])
+	}
+
+	localUnsetAccessible := initWithLocal(t, "", newGitWorkdir(t))
+	checks = readChecks(localUnsetAccessible)
+	if checks["remote workdir"].Status != "ok" || !strings.Contains(checks["remote workdir"].Detail, "locally accessible; used as fallback") {
+		t.Fatalf("local unset + accessible remote: %+v", checks["remote workdir"])
+	}
+	if checks["local code fallback"].Status != "ok" || !strings.Contains(checks["local code fallback"].Detail, "falling back") {
+		t.Fatalf("local unset + accessible remote fallback: %+v", checks["local code fallback"])
+	}
+
+	localSetAccessible := initWithLocal(t, newGitWorkdir(t), newGitWorkdir(t))
+	checks = readChecks(localSetAccessible)
+	if checks["local workdir"].Status != "ok" {
+		t.Fatalf("local set + accessible remote local check: %+v", checks["local workdir"])
+	}
+	if !strings.Contains(checks["remote workdir"].Detail, "remote-only (not checked locally)") ||
+		strings.Contains(checks["remote workdir"].Detail, "locally accessible") {
+		t.Fatalf("local set + accessible remote wording: %+v", checks["remote workdir"])
+	}
+	if _, ok := checks["local code fallback"]; ok {
+		t.Fatalf("local set + accessible remote should not fall back: %+v", checks["local code fallback"])
 	}
 
 	nonGit := t.TempDir()
@@ -1733,5 +1768,80 @@ func TestRunnerInputResolution(t *testing.T) {
 	uri := runRunner(uriRunDir, uriRunDir)
 	if uri.Status != "succeeded" || uri.ExitCode != 0 || uri.Error != "" {
 		t.Fatalf("URI input was not skipped: %+v", uri)
+	}
+}
+
+func TestRemoteWorkdirValidation(t *testing.T) {
+	t.Setenv("LEM_CONFIG_DIR", t.TempDir())
+	t.Setenv("LEM_FAILPOINT", "")
+	const want = "remote.workdir must be absolute or start with ~/"
+	absWorkdir := newGitWorkdir(t)
+
+	absRoot := t.TempDir()
+	code, out, errOut := runCLI("init", "--root", absRoot, "--project", "abs",
+		"--host", "local", "--workdir", absWorkdir, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("absolute workdir init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", absRoot, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", absRoot, "run", "start", "--task", "T1", "--command", "true")
+
+	tildeRoot := t.TempDir()
+	code, out, errOut = runCLI("init", "--root", tildeRoot, "--project", "tilde",
+		"--host", "local", "--workdir", "~/ROAD", "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("tilde workdir init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", tildeRoot, "task", "add", "--id", "T1", "--title", "task")
+	mustRun(t, "--json", "--project", tildeRoot, "run", "start", "--task", "T1", "--command", "true")
+
+	for _, workdir := range []string{"ROAD", "./ROAD", "../ROAD"} {
+		root := t.TempDir()
+		code, out, errOut = runCLI("init", "--root", root, "--project", "relative",
+			"--host", "local", "--workdir", workdir, "--run-root", "~/.lem-runs")
+		if code != 2 || !strings.Contains(out+errOut, want) {
+			t.Fatalf("relative workdir %q: exit=%d out=%s err=%s", workdir, code, out, errOut)
+		}
+		if _, err := os.Stat(filepath.Join(root, "progress")); !os.IsNotExist(err) {
+			t.Fatalf("relative workdir %q created progress/", workdir)
+		}
+	}
+
+	oldRoot := t.TempDir()
+	code, out, errOut = runCLI("init", "--root", oldRoot, "--project", "old",
+		"--host", "local", "--workdir", absWorkdir, "--run-root", "~/.lem-runs")
+	if code != 0 {
+		t.Fatalf("old project init: %d %s %s", code, out, errOut)
+	}
+	mustRun(t, "--json", "--project", oldRoot, "task", "add", "--id", "T1", "--title", "task")
+	projectPath := filepath.Join(oldRoot, "progress", "project.yaml")
+	raw, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte("workdir: "+absWorkdir), []byte("workdir: ROAD"), 1)
+	if err := os.WriteFile(projectPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = runCLI("--project", oldRoot, "run", "start", "--task", "T1", "--command", "true")
+	if code != 2 || !strings.Contains(out+errOut, want) {
+		t.Fatalf("old relative remote.workdir: exit=%d out=%s err=%s", code, out, errOut)
+	}
+
+	doctorOut := mustRun(t, "--json", "--project", oldRoot, "doctor")
+	var report struct {
+		Checks []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(doctorOut), &report); err != nil {
+		t.Fatal(err)
+	}
+	var remote doctorCheck
+	for _, chk := range report.Checks {
+		if chk.Name == "remote workdir" {
+			remote = chk
+		}
+	}
+	if remote.Status != "warn" || !strings.Contains(remote.Detail, want) {
+		t.Fatalf("doctor invalid remote.workdir: %+v", remote)
 	}
 }

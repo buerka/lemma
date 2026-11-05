@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/buerka/lemma/internal/core"
+	"github.com/buerka/lemma/internal/schema"
 )
 
 type doctorCheck struct {
@@ -75,24 +76,26 @@ func cmdDoctor(c *Context, args []string) error {
 		add("project.yaml", "ok", "remote fields present")
 	}
 
+	local := l.LocalWorkdir()
+	rawRemote := strings.TrimSpace(l.Project.Remote.Workdir)
 	remotePath := l.RemoteWorkdirPath()
 	remoteAccessible := false
-	if remotePath != "" {
+	if remotePath != "" && schema.ValidRemoteWorkdir(rawRemote) {
 		if st, err := os.Stat(remotePath); err == nil && st.IsDir() {
 			remoteAccessible = true
 		}
 	}
-	if remotePath == "" {
+	switch {
+	case rawRemote == "":
 		add("remote workdir", "warn", "remote.workdir is not configured")
-	} else {
-		detail := "remote-only, not checked locally: " + remotePath
-		if remoteAccessible {
-			detail += " (locally accessible for fallback only)"
-		}
-		add("remote workdir", "ok", detail)
+	case !schema.ValidRemoteWorkdir(rawRemote):
+		add("remote workdir", "warn", "remote.workdir must be absolute or start with ~/: "+rawRemote)
+	case local == "" && remoteAccessible:
+		add("remote workdir", "ok", remotePath+" (locally accessible; used as fallback)")
+	default:
+		add("remote workdir", "ok", "remote-only (not checked locally): "+remotePath)
 	}
 
-	local := l.LocalWorkdir()
 	localUsable := false
 	localIssue := ""
 	if local != "" {

@@ -45,6 +45,9 @@ func StartRun(l *Ledger, opts StartRunOptions) (*StartRunResult, error) {
 		return nil, err
 	}
 	defer func() { _ = lock.Release() }()
+	if !schema.ValidRemoteWorkdir(l.Project.Remote.Workdir) {
+		return nil, Errorf(CodeUsage, "remote.workdir must be absolute or start with ~/")
+	}
 	if err := EnsureClean(l); err != nil {
 		return nil, err
 	}
