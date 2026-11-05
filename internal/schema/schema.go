@@ -293,27 +293,26 @@ func (g Gate) Validate() error {
 
 // RunSpec is progress/runs/<run_id>/run_spec.json.
 type RunSpec struct {
-	RunID        string            `json:"run_id"`
-	Project      string            `json:"project"`
-	TaskID       string            `json:"task_id"`
-	Method       string            `json:"method"`
-	Split        string            `json:"split"`
-	Seed         int               `json:"seed"`
-	Host         string            `json:"host,omitempty"`
-	LocalWorkdir string            `json:"local_workdir,omitempty"`
-	Workdir      string            `json:"workdir,omitempty"`
-	RunRoot      string            `json:"run_root,omitempty"`
-	Python       string            `json:"python,omitempty"`
-	Command      string            `json:"command"`
-	Env          map[string]string `json:"env,omitempty"`
-	Inputs       []InputRef        `json:"inputs,omitempty"`
-	Outputs      []string          `json:"outputs,omitempty"`
-	Code         CodeInfo          `json:"code"`
-	ConfigHash   string            `json:"config_hash"`
-	ConfigPath   string            `json:"config_path,omitempty"`
-	Data         *DataRef          `json:"data,omitempty"`
-	CreatedAt    string            `json:"created_at"`
-	Revision     string            `json:"revision"`
+	RunID      string            `json:"run_id"`
+	Project    string            `json:"project"`
+	TaskID     string            `json:"task_id"`
+	Method     string            `json:"method"`
+	Split      string            `json:"split"`
+	Seed       int               `json:"seed"`
+	Host       string            `json:"host,omitempty"`
+	Workdir    string            `json:"workdir,omitempty"`
+	RunRoot    string            `json:"run_root,omitempty"`
+	Python     string            `json:"python,omitempty"`
+	Command    string            `json:"command"`
+	Env        map[string]string `json:"env,omitempty"`
+	Inputs     []InputRef        `json:"inputs,omitempty"`
+	Outputs    []string          `json:"outputs,omitempty"`
+	Code       CodeInfo          `json:"code"`
+	ConfigHash string            `json:"config_hash"`
+	ConfigPath string            `json:"config_path,omitempty"`
+	Data       *DataRef          `json:"data,omitempty"`
+	CreatedAt  string            `json:"created_at"`
+	Revision   string            `json:"revision"`
 }
 
 type InputRef struct {

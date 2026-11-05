@@ -76,23 +76,38 @@ func cmdDoctor(c *Context, args []string) error {
 	}
 
 	remotePath := l.RemoteWorkdirPath()
+	remoteAccessible := false
+	if remotePath != "" {
+		if st, err := os.Stat(remotePath); err == nil && st.IsDir() {
+			remoteAccessible = true
+		}
+	}
 	if remotePath == "" {
 		add("remote workdir", "warn", "remote.workdir is not configured")
 	} else {
-		add("remote workdir", "ok", "remote-only, not checked locally: "+remotePath)
+		detail := "remote-only, not checked locally: " + remotePath
+		if remoteAccessible {
+			detail += " (locally accessible for fallback only)"
+		}
+		add("remote workdir", "ok", detail)
 	}
-	if local := l.LocalWorkdir(); local != "" {
+
+	local := l.LocalWorkdir()
+	localUsable := false
+	localIssue := ""
+	if local != "" {
 		st, err := os.Stat(local)
 		switch {
 		case err != nil:
-			add("local workdir", "warn", local+" is missing; code provenance will be incomplete")
+			localIssue = "local.workdir is missing: " + local
 		case !st.IsDir():
-			add("local workdir", "warn", local+" is not a directory; code provenance will be incomplete")
+			localIssue = "local.workdir is not a directory: " + local
 		default:
 			repo := core.GitTopLevel(local)
 			if repo == "" {
-				add("local workdir", "warn", local+" is not a git repository; code provenance will be incomplete")
+				localIssue = "local.workdir is not a git repository: " + local
 			} else {
+				localUsable = true
 				add("local workdir", "ok", local+" (git repo "+repo+")")
 				if clean, err := (core.Git{Dir: repo}).IsClean(); err != nil {
 					add("local workdir status", "warn", err.Error())
@@ -103,12 +118,23 @@ func cmdDoctor(c *Context, args []string) error {
 				}
 			}
 		}
-	} else if remotePath == "" {
-		add("local code fallback", "warn", "local.workdir is not set and remote.workdir is empty")
-	} else if st, err := os.Stat(remotePath); err == nil && st.IsDir() {
-		add("local code fallback", "ok", "remote.workdir is locally accessible: "+remotePath)
-	} else {
-		add("local code fallback", "warn", "remote.workdir is remote-only ("+remotePath+"); set local.workdir for local code provenance")
+		if localIssue != "" {
+			add("local workdir", "warn", localIssue+"; code provenance will be incomplete")
+		}
+	}
+	if !localUsable {
+		switch {
+		case remoteAccessible:
+			reason := "local.workdir is not configured"
+			if localIssue != "" {
+				reason = localIssue
+			}
+			add("local code fallback", "ok", reason+"; falling back to locally accessible remote.workdir: "+remotePath)
+		case localIssue != "":
+			add("local code fallback", "warn", localIssue+" and remote.workdir is not locally accessible; code provenance will be incomplete")
+		default:
+			add("local code fallback", "warn", "local.workdir is not set and remote.workdir is not locally accessible; set local.workdir for local code provenance")
+		}
 	}
 	python := l.Project.Remote.Python
 	if python == "" {

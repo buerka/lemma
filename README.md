@@ -413,8 +413,12 @@ storage:
 - `--config` / `--data` 的相对路径会**分别**在本地和远端 workdir 下解析。
   两边布局必须使用同一个相对路径；如果本地/远端绝对路径不同，传相对路径，
   不要把本地绝对路径写进 `run_spec`。
-- `run_spec.local_workdir` 只用于本地溯源；`run_spec.workdir` 仍是远端 runner
-  cwd。`REMOTE_TASK.md` 只包含远端信息，不传 `local_workdir`。
+- config/data 应位于 `local.workdir` 内。绝对路径只有在 `local.workdir` 内才会
+  被接受并改写成相对路径；`..` 逃出 workdir 的路径会被拒绝。若 `local.workdir`
+  未设置，则沿用 v0.2 fallback；此时仍建议使用远端也存在的相对路径。
+- 本地 provenance（local.workdir / remote.workdir）写入本地 `run.start` event
+  payload，不写入远端 `run_spec.json`。`run_spec.json` 只包含远端
+  `workdir`；`REMOTE_TASK.md` 保持现状，只含远端信息。
 - 如果代码和账本在同一个目录，可把 `local.workdir` / `remote.workdir` 设为
   `root` 或留空。
 
@@ -433,7 +437,10 @@ lem doctor
   并提示 code provenance 会不完整；git dirty 也会 WARN。
 - 未设置 `local.workdir`：检查 `remote.workdir` 是否本地可访问；不可访问会给
   WARN，提示设置 `local.workdir`。
-- `remote.workdir` 始终标记为 `remote-only, not checked locally`。
+- local.workdir 缺失或不可用时，如果 remote.workdir 本地可访问，会明确显示
+  正在把 remote.workdir 作为本地 fallback 使用。
+- `remote.workdir` 始终标记为 `remote-only, not checked locally`；若它同时被
+  用作本地 fallback，会附加说明。
 
 在 agent 里手动验证一次：
 
@@ -880,7 +887,6 @@ Manager Agent
   "project": "myproject",
   "task_id": "T1",
   "host": "gpu",
-  "local_workdir": "/path/to/local/clone",
   "workdir": "~/project",
   "run_root": "~/.lem-runs",
   "python": "python3",
@@ -1115,7 +1121,8 @@ Implemented in v0.3:
   semantics.
 - Local run manifests and artifact listing/verification.
 - Separate `local.workdir` (local clone/provenance) and `remote.workdir`
-  (runner cwd); `run_spec.local_workdir` is local-only.
+  (runner cwd); local provenance lives in the local `run.start` event, not the
+  uploaded `run_spec.json`.
 - TTY/token approval gates with `approval_method`.
 - Remote `code` / `environment` / `environment_hash` recorded by the runner.
 - Explicit `environment_error` when environment collection is empty.

@@ -121,27 +121,26 @@ func StartRun(l *Ledger, opts StartRunOptions) (*StartRunResult, error) {
 		outputs = []string{"metrics.json", "manifest.json", "result.json", "checkpoints/"}
 	}
 	spec := schema.RunSpec{
-		RunID:        runID,
-		Project:      l.Project.Project,
-		TaskID:       opts.TaskID,
-		Method:       opts.Method,
-		Split:        opts.Split,
-		Seed:         opts.Seed,
-		Host:         l.Project.Remote.Host,
-		LocalWorkdir: l.LocalWorkdir(),
-		Workdir:      l.Project.Remote.Workdir,
-		RunRoot:      l.Project.Remote.RunRoot,
-		Python:       python,
-		Command:      command,
-		Env:          env,
-		Inputs:       inputs,
-		Outputs:      outputs,
-		Code:         code,
-		ConfigHash:   configHash,
-		ConfigPath:   configPath,
-		Data:         data,
-		CreatedAt:    l.NowUTC(),
-		Revision:     rev,
+		RunID:      runID,
+		Project:    l.Project.Project,
+		TaskID:     opts.TaskID,
+		Method:     opts.Method,
+		Split:      opts.Split,
+		Seed:       opts.Seed,
+		Host:       l.Project.Remote.Host,
+		Workdir:    l.Project.Remote.Workdir,
+		RunRoot:    l.Project.Remote.RunRoot,
+		Python:     python,
+		Command:    command,
+		Env:        env,
+		Inputs:     inputs,
+		Outputs:    outputs,
+		Code:       code,
+		ConfigHash: configHash,
+		ConfigPath: configPath,
+		Data:       data,
+		CreatedAt:  l.NowUTC(),
+		Revision:   rev,
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, Wrap(CodeGeneral, "invalid run spec", err)
@@ -666,7 +665,11 @@ func (l *Ledger) resolveInputPath(kind, p string) (string, error) {
 // clone and is recorded as a relative path for the remote runner.
 func (l *Ledger) specInputPath(kind, original, resolved string) (string, error) {
 	if !filepath.IsAbs(original) {
-		return original, nil
+		clean := filepath.Clean(original)
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return "", Errorf(CodeUsage, "%s path must not escape the workdir: %s", kind, original)
+		}
+		return filepath.ToSlash(clean), nil
 	}
 	local := l.LocalWorkdir()
 	if local == "" {
